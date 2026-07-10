@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>X Bookmark Injector — injected card, 2 directions</title>
+<style>
+  :root{
+    --bg:#000; --panel:#16181c; --panel-2:#1d1f23; --line:#2f3336;
+    --text:#e7e9ea; --muted:#71767b; --blue:#1d9bf0; --blue-dim:#0f5b8f;
+    --green:#00ba7c; --pink:#f91880; --amber:#ffd400; --radius:16px;
+    --accent:#1d9bf0;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:#0a0a0a; color:var(--text);
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:32px 20px 80px;
+  }
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px;max-width:820px}
+  .sub code{background:#16181c;padding:1px 6px;border-radius:6px;color:#cfd9e0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;max-width:900px;margin:0 auto}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .col h2{font-size:15px;letter-spacing:.02em;text-transform:uppercase;color:var(--muted);margin:0 0 10px;display:flex;gap:8px;align-items:center}
+  .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .tag.a{background:#12283a;color:#5cb8f5}
+  .tag.b{background:#1e2a12;color:#a5d95c}
+  /* feed frame */
+  .feed{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .post{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px}
+  .post:last-child{border-bottom:0}
+  .av{width:40px;height:40px;border-radius:50%;flex:0 0 40px;background:linear-gradient(135deg,#3a3d42,#22252a)}
+  .av.z{background:linear-gradient(135deg,#7a5cff,#1d9bf0)}
+  .av.m{background:linear-gradient(135deg,#ff7a59,#f91880)}
+  .body{flex:1;min-width:0}
+  .row1{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .name{font-weight:700}
+  .badge{color:var(--blue)}
+  .handle,.dot,.time{color:var(--muted)}
+  .txt{margin:2px 0 8px;white-space:pre-wrap}
+  .muted{color:var(--muted)}
+  .actions{display:flex;justify-content:space-between;max-width:340px;color:var(--muted);font-size:13px;margin-top:6px}
+  .actions span{display:inline-flex;gap:6px;align-items:center}
+  /* fade a normal post so the injected card pops in the mockup */
+  .post.ghost{opacity:.5}
+  .note{max-width:900px;margin:26px auto 0;background:#101317;border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .note h3{margin:0 0 8px;font-size:14px;color:#cfd9e0}
+  .note li{margin:3px 0;color:#aeb4b9}
+  .ok{color:var(--green)} .no{color:var(--pink)} .maybe{color:var(--amber)}
+  .legend{max-width:900px;margin:0 auto 22px;display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:13px}
+  .legend b{color:var(--text)}
+</style>
+</head>
+<body>
+  <h1>X Bookmark Injector — injected card, two directions</h1>
+  <p class="sub">
+    Both mock a <b>For You</b> feed: a normal post, then the <b>injected bookmark card</b>, then another post.
+    Surfacing is <b>random</b> each open; the card states the bookmark's <b>chronological save rank</b> (order #k of N),
+    the tweet's real <b>posted timestamp</b>, and <b>how many are left</b>. Buttons: <code>Done (remove from X)</code> +
+    <code>Keep for later</code>.
+  </p>
+  <div class="legend">
+    <span><b class="ok">Reliable:</b> tweet posted time · save-rank order (#k of N) · count left</span>
+    <span><b class="no">Not available from X:</b> exact "bookmarked-at" clock time for old backlog</span>
+  </div>
+  <div class="grid">
+    <!-- ============ DIRECTION A: NATIVE MIMIC ============ -->
+    <div class="col">
+      <h2><span class="tag a">A</span> Native mimic — blends in like an ad</h2>
+      <div class="feed">
+        <div class="post ghost">
+          <div class="av"></div>
+          <div class="body">
+            <div class="row1"><span class="name">Miguel Ángel</span><span class="badge">✓</span><span class="handle">@Miguel07Code</span><span class="dot">·</span><span class="time">5h</span></div>
+            <div class="txt">Claude Mythos / Fable 5 solved motion graphics with HTML!</div>
+            <div class="actions"><span>💬 31</span><span>🔁 80</span><span>❤ 1.1K</span><span>📊 290K</span></div>
+          </div>
+        </div>
+
+        <!-- injected card A -->
+        <div class="post" style="background:linear-gradient(180deg,#0b1016,#000);">
+          <div class="av z"></div>
+          <div class="body">
+            <div style="display:flex;align-items:center;gap:6px;color:var(--blue);font-size:12.5px;font-weight:700;margin-bottom:4px">
+              📌 From your bookmarks
+              <span class="muted" style="font-weight:500">· Saved #12 of 87 · 74 left</span>
+            </div>
+            <div class="row1"><span class="name">Zara Zhang</span><span class="badge">✓</span><span class="handle">@zarazhangrui</span><span class="dot">·</span><span class="time">posted Jun 21, 2026</span></div>
+            <div class="txt">I hoard X bookmarks and never read them. So I built an extension that injects a bookmarked post into my main feed every time I open X (almost like an ad). Now I read my bookmarks.</div>
+            <div class="actions"><span>💬 127</span><span>🔁 84</span><span>❤ 1.2K</span><span>🔖 816</span></div>
+            <div style="display:flex;gap:10px;margin-top:10px">
+              <button style="flex:1;background:transparent;border:1px solid var(--line);color:var(--text);padding:7px 0;border-radius:999px;font-weight:600;cursor:pointer">Keep for later</button>
+              <button style="flex:1;background:var(--blue);border:1px solid var(--blue);color:#fff;padding:7px 0;border-radius:999px;font-weight:700;cursor:pointer">Done ✓ (remove from X)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="post ghost">
+          <div class="av"></div>
+          <div class="body">
+            <div class="row1"><span class="name">dominik kundel</span><span class="handle">@dkundel</span><span class="dot">·</span><span class="time">5d</span></div>
+            <div class="txt">A guide to /goal</div>
+            <div class="actions"><span>💬 12</span><span>🔁 9</span><span>❤ 210</span><span>📊 18K</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin-top:8px">Camouflaged: reads as a real post so it hijacks the feed you scan 50×/day. Risk: easy to scroll past.</p>
+    </div>
+
+    <!-- ============ DIRECTION B: DISTINCT ACCENT ============ -->
+    <div class="col">
+      <h2><span class="tag b">B</span> Distinct accent — impossible to ignore</h2>
+      <div class="feed">
+        <div class="post ghost">
+          <div class="av"></div>
+          <div class="body">
+            <div class="row1"><span class="name">Miguel Ángel</span><span class="badge">✓</span><span class="handle">@Miguel07Code</span><span class="dot">·</span><span class="time">5h</span></div>
+            <div class="txt">Claude Mythos / Fable 5 solved motion graphics with HTML!</div>
+            <div class="actions"><span>💬 31</span><span>🔁 80</span><span>❤ 1.1K</span><span>📊 290K</span></div>
+          </div>
+        </div>
+
+        <!-- injected card B -->
+        <div class="post" style="border-left:3px solid var(--blue);background:linear-gradient(180deg,#0a141d,#000);flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+            <span style="color:var(--blue);font-weight:800;font-size:13px">📌 BOOKMARK RESURFACED</span>
+            <span style="font-size:11px;color:#000;background:var(--amber);padding:2px 8px;border-radius:999px;font-weight:800">74 left</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <span style="font-size:11.5px;background:#0f2233;color:#7fc4f5;border:1px solid #14405e;padding:3px 9px;border-radius:999px">Saved #12 of 87 · 12th oldest</span>
+            <span style="font-size:11.5px;background:#16181c;color:var(--muted);border:1px solid var(--line);padding:3px 9px;border-radius:999px">posted Jun 21, 2026</span>
+          </div>
+          <div style="display:flex;gap:12px;width:100%">
+            <div class="av z"></div>
+            <div class="body">
+              <div class="row1"><span class="name">Zara Zhang</span><span class="badge">✓</span><span class="handle">@zarazhangrui</span></div>
+              <div class="txt">I hoard X bookmarks and never read them. So I built an extension that injects a bookmarked post into my main feed every time I open X (almost like an ad). Now I read my bookmarks.</div>
+              <div class="actions"><span>💬 127</span><span>🔁 84</span><span>❤ 1.2K</span><span>🔖 816</span></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;width:100%">
+            <button style="flex:1;background:transparent;border:1px solid var(--line);color:var(--text);padding:8px 0;border-radius:10px;font-weight:600;cursor:pointer">Keep for later</button>
+            <button style="flex:1;background:var(--blue);border:1px solid var(--blue);color:#fff;padding:8px 0;border-radius:10px;font-weight:700;cursor:pointer">Done ✓ Remove from X</button>
+          </div>
+        </div>
+
+        <div class="post ghost">
+          <div class="av"></div>
+          <div class="body">
+            <div class="row1"><span class="name">dominik kundel</span><span class="handle">@dkundel</span><span class="dot">·</span><span class="time">5d</span></div>
+            <div class="txt">A guide to /goal</div>
+            <div class="actions"><span>💬 12</span><span>🔁 9</span><span>❤ 210</span><span>📊 18K</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin-top:8px">Framed + stat chips make progress visible and prompt action. Risk: less "native", could feel like an ad you learn to ignore.</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <h3>Card anatomy (both directions carry the same data)</h3>
+    <ul>
+      <li><b>📌 From your bookmarks</b> — provenance label so you never confuse it with the real feed.</li>
+      <li><span class="ok">Saved #12 of 87</span> — chronological <b>save rank</b> (order #k of N). Order is reliable; it's the position in X's save-ordered list. "12th oldest" framing supports draining the backlog.</li>
+      <li><span class="ok">74 left</span> — bookmarks not yet cleared (total − Done'd).</li>
+      <li><span class="ok">posted Jun 21, 2026</span> — the tweet's <b>real posted timestamp</b> (from the API).</li>
+      <li><span class="no">No exact "bookmarked-at" clock time</span> for old items — X doesn't return it. New Done/Keep actions get a local timestamp going forward.</li>
+      <li><b>Done (remove from X)</b> → real <code>DeleteBookmark</code> mutation · <b>Keep for later</b> → local dismiss, stays in X.</li>
+    </ul>
+  </div>
+<script>
+/* columns are built in the next write step */
+</script>
+</body>
+</html>
