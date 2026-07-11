@@ -146,6 +146,22 @@ function updateActionState(createPatch) {
   return update;
 }
 
+function updateSettings(patch) {
+  if (!patch
+    || typeof patch !== 'object'
+    || Array.isArray(patch)
+    || Object.keys(patch).length !== 1
+    || typeof patch.confirmRealDelete !== 'boolean') {
+    return Promise.resolve({ ok: false, error: 'Invalid settings patch' });
+  }
+  return updateActionState((state) => ({
+    settings: { ...state.settings, confirmRealDelete: patch.confirmRealDelete },
+  })).then(
+    () => ({ ok: true }),
+    (error) => ({ ok: false, error: String(error.message ?? error) }),
+  );
+}
+
 async function act(message, sender) {
   const at = new Date().toISOString();
   if (message.action === 'keep') {
@@ -259,6 +275,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'XBI_ACTION') {
     runAction(message, _sender).then(sendResponse);
+    return true;
+  }
+  if (message?.type === 'XBI_UPDATE_SETTINGS') {
+    updateSettings(message.patch).then(sendResponse);
     return true;
   }
   if (message?.type === 'XBI_GET_STATE') {

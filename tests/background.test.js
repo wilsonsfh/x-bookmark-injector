@@ -718,6 +718,64 @@ describe('service-worker bookmark actions', () => {
     expect(background.sendMessage).not.toHaveBeenCalled();
   });
 
+  it('merges an allowed settings field patch without dropping other settings', async () => {
+    const background = await loadOperationalBackground({ pageRequest: vi.fn() });
+
+    await expect(background.invoke({
+      type: 'XBI_UPDATE_SETTINGS',
+      patch: { confirmRealDelete: false },
+    })).resolves.toEqual({ ok: true });
+
+    expect(background.getState().settings).toEqual({
+      ...OPERATIONAL_STATE.settings,
+      confirmRealDelete: false,
+    });
+  });
+
+  it('serializes a settings patch behind Done so deleteConfirmed is not overwritten', async () => {
+    let releaseDoneWrite;
+    const setImplementation = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseDoneWrite = resolve; }))
+      .mockResolvedValue(undefined);
+    const background = await loadOperationalBackground({
+      pageRequest: vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        payload: { data: { tweet_bookmark_delete: 'Done' } },
+      }),
+      setImplementation,
+    });
+    const done = background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    await vi.waitFor(() => expect(setImplementation).toHaveBeenCalledOnce());
+
+    const settings = background.invoke({
+      type: 'XBI_UPDATE_SETTINGS',
+      patch: { confirmRealDelete: false },
+    });
+    releaseDoneWrite();
+    await Promise.all([done, settings]);
+
+    expect(background.getState().settings).toMatchObject({
+      confirmRealDelete: false,
+      deleteConfirmed: true,
+      keepCooldownHours: 72,
+    });
+  });
+
+  it.each([
+    undefined,
+    {},
+    { confirmRealDelete: 'false' },
+    { deleteConfirmed: true },
+    { confirmRealDelete: true, unknown: true },
+  ])('rejects an invalid settings patch without writing: %j', async (patch) => {
+    const background = await loadOperationalBackground({ pageRequest: vi.fn() });
+
+    await expect(background.invoke({ type: 'XBI_UPDATE_SETTINGS', patch }))
+      .resolves.toEqual({ ok: false, error: 'Invalid settings patch' });
+    expect(background.set).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed actions before reading state or contacting X', async () => {
     const background = await loadOperationalBackground({ pageRequest: vi.fn() });
 

@@ -13,8 +13,8 @@
       --line: #2f3336;
       --text: #e7e9ea;
       --muted: #8b98a5;
-      --blue: #1d9bf0;
-      --blue-hover: #1a8cd8;
+      --blue: #0875b8;
+      --blue-hover: #066aa8;
       --danger: #ff7a7a;
       --space-1: 4px;
       --space-2: 8px;
@@ -51,6 +51,18 @@
     }
 
     .muted { color: var(--muted); }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
 
     .row {
       display: flex;
@@ -194,6 +206,16 @@
     @media (prefers-reduced-motion: reduce) {
       button, .open-link { transition: none; }
     }
+
+    @media (forced-colors: active) {
+      button:focus-visible,
+      .open-link:focus-visible,
+      input:focus-visible {
+        outline: 2px solid Highlight;
+        outline-offset: 2px;
+        box-shadow: none;
+      }
+    }
   </style>
 </head>
 <body>
@@ -210,6 +232,7 @@
       <button id="sync" class="primary" type="button">Sync now</button>
     </div>
     <div id="error" class="status" role="status" aria-live="polite" hidden></div>
+    <div id="activity" class="sr-only" role="status" aria-live="polite"></div>
   </section>
   <section class="settings" aria-label="Delete settings">
     <label class="row">

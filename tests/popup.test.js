@@ -12,6 +12,7 @@ class FakeElement {
     this.href = '';
     this.id = '';
     this.parentElement = null;
+    this.ownerDocument = null;
     this.tagName = tagName.toUpperCase();
     this.type = '';
     this._textContent = '';
@@ -60,6 +61,9 @@ class FakeElement {
   }
 
   replaceChildren(...children) {
+    if (this.children.some((child) => typeof child !== 'string' && child.contains(this.ownerDocument?.activeElement))) {
+      this.ownerDocument.activeElement = this.ownerDocument.body;
+    }
     for (const child of this.children) {
       if (typeof child !== 'string') child.parentElement = null;
     }
@@ -70,9 +74,18 @@ class FakeElement {
 
   remove() {
     if (!this.parentElement) return;
+    if (this.contains(this.ownerDocument?.activeElement)) this.ownerDocument.activeElement = this.ownerDocument.body;
     const index = this.parentElement.children.indexOf(this);
     if (index >= 0) this.parentElement.children.splice(index, 1);
     this.parentElement = null;
+  }
+
+  contains(element) {
+    return this === element || this.children.some((child) => typeof child !== 'string' && child.contains(element));
+  }
+
+  focus() {
+    this.ownerDocument.activeElement = this;
   }
 
   matches(selector) {
@@ -131,17 +144,28 @@ const BASE_STATE = {
 };
 
 function makeDocument() {
+  const document = {
+    activeElement: null,
+    body: null,
+    createElement: null,
+    getElementById: null,
+  };
   const body = new FakeElement('body');
+  body.ownerDocument = document;
+  document.body = body;
+  document.activeElement = body;
   const elements = Object.fromEntries([
     ['left', 'span'],
     ['total', 'span'],
     ['lastSync', 'div'],
     ['sync', 'button'],
     ['error', 'div'],
+    ['activity', 'div'],
     ['confirmDelete', 'input'],
     ['list', 'main'],
   ].map(([id, tag]) => {
     const element = new FakeElement(tag);
+    element.ownerDocument = document;
     element.id = id;
     body.append(element);
     return [id, element];
@@ -150,12 +174,14 @@ function makeDocument() {
   elements.error.hidden = true;
   elements.confirmDelete.type = 'checkbox';
   elements.list.textContent = 'Loading…';
-  return {
-    body,
-    createElement: (tag) => new FakeElement(tag),
-    getElementById: (id) => elements[id] ?? null,
-    elements,
+  document.createElement = (tag) => {
+    const element = new FakeElement(tag);
+    element.ownerDocument = document;
+    return element;
   };
+  document.getElementById = (id) => elements[id] ?? null;
+  document.elements = elements;
+  return document;
 }
 
 async function loadPopup({ sendMessage, storageState, confirm = vi.fn(() => true) } = {}) {
@@ -180,11 +206,46 @@ async function loadPopup({ sendMessage, storageState, confirm = vi.fn(() => true
   });
   await import('../src/popup.js');
   await vi.waitFor(() => expect(runtimeSend).toHaveBeenCalledWith({ type: 'XBI_GET_STATE' }));
-  return { ...document, confirm, local, runtimeSend, storageChanged };
+  return {
+    body: document.body,
+    document,
+    elements: document.elements,
+    confirm,
+    local,
+    runtimeSend,
+    storageChanged,
+  };
 }
 
 function buttonNamed(root, label) {
   return root.querySelectorAll('button').find((button) => button.textContent === label);
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function cssColor(html, token) {
+  return html.match(new RegExp(`--${token}:\\s*(#[0-9a-f]{3,6})`, 'i'))?.[1];
+}
+
+function luminance(hex) {
+  const value = hex.length === 4
+    ? hex.slice(1).split('').map((part) => `${part}${part}`)
+    : hex.slice(1).match(/.{2}/g);
+  const [red, green, blue] = value
+    .map((part) => Number.parseInt(part, 16) / 255)
+    .map((channel) => channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrast(first, second) {
+  const values = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
 }
 
 describe('popup dashboard', () => {
@@ -241,12 +302,64 @@ describe('popup dashboard', () => {
     const action = keep.dispatch('click');
     await vi.waitFor(() => expect(keep.textContent).toBe('Keeping…'));
     expect(oldestRow.querySelectorAll('button').every((button) => button.disabled)).toBe(true);
+    expect(keep.getAttribute('aria-label')).toBe('Keeping bookmark by @oldest');
+    expect(keep.parentElement.getAttribute('aria-busy')).toBe('true');
+    expect(fixture.elements.activity.textContent).toBe('Keeping bookmark');
     resolveKeep({ ok: true });
     await action;
 
     expect(fixture.elements.left.textContent).toBe('2');
     expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2);
     expect(fixture.runtimeSend).toHaveBeenCalledWith({ type: 'XBI_ACTION', action: 'keep', tweetId: 'oldest' });
+    expect(fixture.elements.activity.textContent).toBe('');
+  });
+
+  it('coalesces storage renders and commits only the newest generation', async () => {
+    const reads = [];
+    const sendMessage = vi.fn((message) => {
+      if (message.type !== 'XBI_GET_STATE') return Promise.resolve({ ok: true });
+      const read = deferred();
+      reads.push(read);
+      return read.promise;
+    });
+    const fixture = await loadPopup({ sendMessage });
+
+    fixture.storageChanged({}, 'local');
+    fixture.storageChanged({}, 'local');
+    expect(reads).toHaveLength(1);
+
+    const stale = structuredClone(BASE_STATE);
+    stale.bookmarks = { oldest: BASE_STATE.bookmarks.oldest };
+    stale.cleared = {};
+    reads[0].resolve(stale);
+    await vi.waitFor(() => expect(reads).toHaveLength(2));
+    reads[1].resolve(structuredClone(BASE_STATE));
+
+    await vi.waitFor(() => expect(fixture.elements.left.textContent).toBe('2'));
+    expect(reads).toHaveLength(2);
+    expect(fixture.elements.total.textContent).toBe('3');
+  });
+
+  it('does not let a storage render replace pending row controls', async () => {
+    const keep = deferred();
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(BASE_STATE);
+      if (message.action === 'keep') return keep.promise;
+      return { ok: true };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    const pending = buttonNamed(fixture.elements.list.querySelectorAll('article')[0], 'Keep').dispatch('click');
+    await vi.waitFor(() => expect(buttonNamed(fixture.elements.list, 'Keeping…')).toBeDefined());
+
+    fixture.storageChanged({}, 'local');
+    await vi.waitFor(() => expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_GET_STATE')).toHaveLength(2));
+
+    const pendingButton = buttonNamed(fixture.elements.list, 'Keeping…');
+    expect(pendingButton).toBeDefined();
+    expect(pendingButton.parentElement.querySelectorAll('button').every((button) => button.disabled)).toBe(true);
+    keep.resolve({ ok: false, error: 'Keep failed' });
+    await pending;
   });
 
   it('requires one-time confirmation and leaves the row untouched when cancelled', async () => {
@@ -308,6 +421,7 @@ describe('popup dashboard', () => {
     expect(fixture.elements.error.textContent).toContain('Removed from X.');
     const undo = buttonNamed(fixture.elements.error, 'Undo');
     expect(undo).toBeDefined();
+    expect(fixture.document.activeElement).toBe(undo);
 
     await undo.dispatch('click');
 
@@ -315,6 +429,91 @@ describe('popup dashboard', () => {
     expect(fixture.elements.left.textContent).toBe('2');
     expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2);
     expect(fixture.elements.error.hidden).toBe(true);
+    expect(fixture.document.activeElement).toBe(buttonNamed(fixture.elements.list, 'Done'));
+  });
+
+  it('does not let a storage render erase an active Undo control', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const state = structuredClone(BASE_STATE);
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(state);
+      if (message.action === 'done') {
+        state.cleared.oldest = { action: 'done', at: new Date().toISOString() };
+        state.settings.deleteConfirmed = true;
+        return { ok: true, undoUntil: Date.now() + 6_000 };
+      }
+      return { ok: false };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    await buttonNamed(fixture.elements.list.querySelectorAll('article')[0], 'Done').dispatch('click');
+    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeDefined();
+
+    fixture.storageChanged({}, 'local');
+    await vi.waitFor(() => expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_GET_STATE')).toHaveLength(3));
+
+    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeDefined();
+    expect(fixture.elements.error.textContent).toContain('Removed from X.');
+  });
+
+  it('shows Undo expiry and moves focus to Sync when the window closes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const state = structuredClone(BASE_STATE);
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(state);
+      if (message.action === 'done') {
+        state.cleared.oldest = { action: 'done', at: new Date().toISOString() };
+        state.settings.deleteConfirmed = true;
+        return { ok: true, undoUntil: Date.now() + 6_000 };
+      }
+      return { ok: false };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    await buttonNamed(fixture.elements.list, 'Done').dispatch('click');
+
+    await vi.advanceTimersByTimeAsync(6_001);
+
+    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeUndefined();
+    expect(fixture.elements.error.textContent).toBe('Undo window expired');
+    expect(fixture.document.activeElement).toBe(fixture.elements.sync);
+  });
+
+  it('never restores a failed Undo button after its deadline passes in flight', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const state = structuredClone(BASE_STATE);
+    const restore = deferred();
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(state);
+      if (message.action === 'done') {
+        state.cleared.oldest = { action: 'done', at: new Date().toISOString() };
+        state.settings.deleteConfirmed = true;
+        return { ok: true, undoUntil: Date.now() + 6_000 };
+      }
+      if (message.action === 'undo') return restore.promise;
+      return { ok: false };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    await buttonNamed(fixture.elements.list, 'Done').dispatch('click');
+    const undo = buttonNamed(fixture.elements.error, 'Undo');
+
+    const pending = undo.dispatch('click');
+    await vi.waitFor(() => expect(undo.textContent).toBe('Restoring…'));
+    expect(undo.getAttribute('aria-label')).toBe('Restoring bookmark');
+    expect(fixture.elements.error.getAttribute('aria-busy')).toBe('true');
+    expect(fixture.elements.activity.textContent).toBe('Restoring bookmark');
+    await vi.advanceTimersByTimeAsync(6_001);
+    restore.resolve({ ok: false, error: 'restore failed' });
+    await pending;
+
+    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeUndefined();
+    expect(fixture.elements.error.textContent).toBe('Undo window expired');
+    expect(fixture.elements.error.getAttribute('aria-busy')).toBe('false');
+    expect(fixture.document.activeElement).toBe(fixture.elements.sync);
   });
 
   it('restores Sync controls and reports a failed sync after refreshing state', async () => {
@@ -330,11 +529,15 @@ describe('popup dashboard', () => {
     const syncing = fixture.elements.sync.dispatch('click');
     await vi.waitFor(() => expect(fixture.elements.sync.textContent).toBe('Syncing…'));
     expect(fixture.elements.sync.disabled).toBe(true);
+    expect(fixture.elements.sync.getAttribute('aria-label')).toBe('Syncing bookmarks');
+    expect(fixture.elements.sync.getAttribute('aria-busy')).toBe('true');
+    expect(fixture.elements.activity.textContent).toBe('Syncing bookmarks');
     resolveSync({ ok: false, error: 'Sync blocked' });
     await syncing;
 
     expect(fixture.elements.sync.disabled).toBe(false);
     expect(fixture.elements.sync.textContent).toBe('Sync now');
+    expect(fixture.elements.sync.getAttribute('aria-busy')).toBe('false');
     expect(fixture.elements.error.textContent).toBe('Sync blocked');
   });
 
@@ -348,18 +551,58 @@ describe('popup dashboard', () => {
     expect(fixture.elements.list.textContent).toContain('Unable to load bookmarks.');
   });
 
-  it('persists the confirmation toggle without dropping other settings', async () => {
-    const stored = { settings: { ...BASE_STATE.settings, syncEveryHours: 24 } };
-    const fixture = await loadPopup({ storageState: stored });
+  it('distinguishes an empty cache from an all-caught-up cache', async () => {
+    let state = { ...structuredClone(BASE_STATE), bookmarks: {}, cleared: {} };
+    const sendMessage = vi.fn(async (message) => message.type === 'XBI_GET_STATE'
+      ? structuredClone(state)
+      : { ok: true });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.textContent).toContain('No cached bookmarks yet.'));
+
+    state = structuredClone(BASE_STATE);
+    state.cleared = Object.fromEntries(Object.keys(state.bookmarks)
+      .map((id) => [id, { action: 'done', at: '2026-07-11T12:00:00Z' }]));
+    fixture.storageChanged({}, 'local');
+
+    await vi.waitFor(() => expect(fixture.elements.list.textContent).toBe('All caught up. No bookmarks left.'));
+  });
+
+  it.each([
+    [undefined, true],
+    [null, true],
+    [{}, true],
+    [{ confirmRealDelete: 'false', deleteConfirmed: false }, true],
+    [{ confirmRealDelete: true, deleteConfirmed: 'true' }, true],
+    [{ confirmRealDelete: false, deleteConfirmed: false }, false],
+    [{ confirmRealDelete: true, deleteConfirmed: true }, false],
+  ])('normalizes confirmation settings fail-safe: %j', async (settings, shouldConfirm) => {
+    const state = structuredClone(BASE_STATE);
+    state.settings = settings;
+    const confirm = vi.fn(() => false);
+    const sendMessage = vi.fn(async (message) => message.type === 'XBI_GET_STATE'
+      ? state
+      : { ok: false, error: 'not expected' });
+    const fixture = await loadPopup({ confirm, sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+
+    await buttonNamed(fixture.elements.list.querySelectorAll('article')[0], 'Done').dispatch('click');
+
+    expect(confirm).toHaveBeenCalledTimes(shouldConfirm ? 1 : 0);
+  });
+
+  it('patches the confirmation field through the serialized background message', async () => {
+    const fixture = await loadPopup();
     await vi.waitFor(() => expect(fixture.elements.confirmDelete.checked).toBe(true));
 
     fixture.elements.confirmDelete.checked = false;
     await fixture.elements.confirmDelete.dispatch('change');
 
-    expect(fixture.local.get).toHaveBeenCalledWith('settings');
-    expect(fixture.local.set).toHaveBeenCalledWith({
-      settings: { ...stored.settings, confirmRealDelete: false },
+    expect(fixture.runtimeSend).toHaveBeenCalledWith({
+      type: 'XBI_UPDATE_SETTINGS',
+      patch: { confirmRealDelete: false },
     });
+    expect(fixture.local.get).not.toHaveBeenCalled();
+    expect(fixture.local.set).not.toHaveBeenCalled();
   });
 
   it('provides semantic live regions, visible focus, and 24px action targets', async () => {
@@ -374,5 +617,18 @@ describe('popup dashboard', () => {
     expect(html).toMatch(/min-height:\s*24px/);
     expect(html).toContain('aria-label="Confirm before deleting bookmarks from X"');
     expect(script).not.toContain("addEventListener('dblclick'");
+  });
+
+  it('meets objective contrast gates for primary, hover, and focus colors', async () => {
+    const html = await readFile(new URL('../public/popup.html', import.meta.url), 'utf8');
+    const background = cssColor(html, 'bg');
+    const primary = cssColor(html, 'blue');
+    const hover = cssColor(html, 'blue-hover');
+
+    expect(contrast(primary, '#fff')).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(hover, '#fff')).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(primary, background)).toBeGreaterThanOrEqual(3);
+    expect(html).toContain('@media (forced-colors: active)');
+    expect(html).toContain('outline: 2px solid Highlight');
   });
 });
