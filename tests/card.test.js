@@ -6,7 +6,9 @@ class FakeElement {
     this.tagName = tagName.toUpperCase();
     this.children = [];
     this.dataset = {};
+    this.disabled = false;
     this.eventListeners = new Map();
+    this.hidden = false;
     this.id = '';
     this.parentElement = null;
     this.style = { cssText: '' };
@@ -29,6 +31,10 @@ class FakeElement {
     this[name] = String(value);
   }
 
+  removeAttribute(name) {
+    delete this[name];
+  }
+
   findAll(tagName) {
     return this.children.flatMap((child) => [
       ...(child.tagName === tagName.toUpperCase() ? [child] : []),
@@ -40,6 +46,22 @@ class FakeElement {
 function installDom() {
   vi.stubGlobal('document', { createElement: (tag) => new FakeElement(tag) });
   vi.stubGlobal('window', { open: vi.fn() });
+}
+
+function contrastRatio(foreground, background) {
+  const luminance = (hex) => {
+    const channels = hex.match(/[\da-f]{2}/gi).map((channel) => parseInt(channel, 16) / 255);
+    const linear = channels.map((channel) => (
+      channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+    ));
+    return (0.2126 * linear[0]) + (0.7152 * linear[1]) + (0.0722 * linear[2]);
+  };
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
+
+function cssToken(css, name) {
+  return css.match(new RegExp(`${name}:\\s*(#[\\da-f]{6})`, 'i'))?.[1];
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -65,6 +87,7 @@ describe('formatCardMeta', () => {
 
   it('states when the posted time is unavailable', () => {
     expect(formatCardMeta({ saveRank: 4 }, 9, 6).posted).toBe('Posted time unavailable');
+    expect(formatCardMeta({ saveRank: 4, createdAt: 'not-a-date' }, 9, 6).posted).toBe('Posted time unavailable');
   });
 });
 
@@ -96,7 +119,7 @@ describe('buildCardElement', () => {
     expect(card.findAll('img')).toHaveLength(2);
   });
 
-  it('provides focus-visible action buttons with usable targets and invokes handlers', () => {
+  it('provides focus-visible action buttons with usable targets and invokes handlers', async () => {
     installDom();
     const onKeep = vi.fn();
     const onDone = vi.fn();
@@ -113,26 +136,83 @@ describe('buildCardElement', () => {
     expect(css).toContain('--xbi-target-size: 36px');
     expect(css).toContain('min-height: var(--xbi-target-size)');
     expect(css).toContain(':focus-visible');
-    buttons[0].eventListeners.get('click')();
-    buttons[1].eventListeners.get('click')();
+    await buttons[0].eventListeners.get('click')();
+    await buttons[1].eventListeners.get('click')();
     expect(onKeep).toHaveBeenCalledOnce();
     expect(onDone).toHaveBeenCalledOnce();
   });
 
-  it('opens the original bookmark safely on double click', () => {
+  it('keeps accent text at WCAG AA contrast in light, dark, and filled states', () => {
     installDom();
     const card = buildCardElement(
-      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me', url: 'https://x.com/zara/status/1' },
+      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me' },
       { total: 1, left: 1 },
       { onKeep: vi.fn(), onDone: vi.fn() },
     );
+    const css = card.findAll('style')[0].textContent;
+    const lightText = cssToken(css, '--xbi-accent-text-light');
+    const darkText = cssToken(css, '--xbi-accent-text-dark');
+    const accentFill = cssToken(css, '--xbi-accent');
+    const onAccent = cssToken(css, '--xbi-on-accent');
 
-    card.eventListeners.get('dblclick')();
-
-    expect(window.open).toHaveBeenCalledWith('https://x.com/zara/status/1', '_blank', 'noopener');
+    expect(lightText).toMatch(/^#[\da-f]{6}$/i);
+    expect(darkText).toMatch(/^#[\da-f]{6}$/i);
+    expect(contrastRatio(lightText, '#ffffff')).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(darkText, '#000000')).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(onAccent, accentFill)).toBeGreaterThanOrEqual(4.5);
   });
 
-  it('does not open the bookmark when an action button is double clicked', () => {
+  it('locks both actions while one request is pending and ignores duplicate clicks', async () => {
+    installDom();
+    let resolveAction;
+    const onKeep = vi.fn(() => new Promise((resolve) => { resolveAction = resolve; }));
+    const onDone = vi.fn();
+    const card = buildCardElement(
+      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me' },
+      { total: 1, left: 1 },
+      { onKeep, onDone },
+    );
+    const buttons = card.findAll('button');
+
+    const pending = buttons[0].eventListeners.get('click')();
+    const duplicate = buttons[1].eventListeners.get('click')();
+
+    expect(onKeep).toHaveBeenCalledOnce();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+    expect(card['aria-busy']).toBe('true');
+
+    resolveAction({ ok: true });
+    await pending;
+    await duplicate;
+    expect(buttons.every((button) => !button.disabled)).toBe(true);
+    expect(card['aria-busy']).toBeUndefined();
+  });
+
+  it('announces rejected and unsuccessful actions without removing the card', async () => {
+    installDom();
+    const onKeep = vi.fn().mockRejectedValue(new Error('offline'));
+    const onDone = vi.fn().mockResolvedValue({ ok: false, error: 'X did not confirm the action.' });
+    const card = buildCardElement(
+      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me' },
+      { total: 1, left: 1 },
+      { onKeep, onDone },
+    );
+    const buttons = card.findAll('button');
+    const status = card.findAll('p').find((node) => node.className === 'xbi-status');
+
+    await expect(buttons[0].eventListeners.get('click')()).resolves.toBeUndefined();
+    expect(status.role).toBe('status');
+    expect(status['aria-live']).toBe('polite');
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toBe('Could not update this bookmark. Try again.');
+
+    await buttons[1].eventListeners.get('click')();
+    expect(status.textContent).toBe('X did not confirm the action.');
+    expect(card.parentElement).toBeNull();
+  });
+
+  it('renders a visible keyboard-accessible link for a valid X post URL', () => {
     installDom();
     const card = buildCardElement(
       { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me', url: 'https://x.com/zara/status/1' },
@@ -140,8 +220,37 @@ describe('buildCardElement', () => {
       { onKeep: vi.fn(), onDone: vi.fn() },
     );
 
-    card.eventListeners.get('dblclick')({ target: { closest: () => ({ tagName: 'BUTTON' }) } });
+    const link = card.findAll('a')[0];
 
-    expect(window.open).not.toHaveBeenCalled();
+    expect(link.textContent).toBe('View post on X');
+    expect(link.href).toBe('https://x.com/zara/status/1');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener noreferrer');
+    expect(card.eventListeners.has('dblclick')).toBe(false);
+  });
+
+  it('accepts Twitter post URLs and omits untrusted post and image URLs', () => {
+    installDom();
+    const trusted = buildCardElement(
+      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me', url: 'https://twitter.com/zara/status/1' },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const untrusted = buildCardElement(
+      {
+        author: 'Mallory',
+        avatar: 'https://example.com/avatar.jpg',
+        media: [{ url: 'javascript:alert(1)' }],
+        saveRank: 2,
+        text: 'Unsafe links',
+        url: 'https://x.com/home',
+      },
+      { total: 2, left: 2 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+
+    expect(trusted.findAll('a')[0].href).toBe('https://twitter.com/zara/status/1');
+    expect(untrusted.findAll('a')).toHaveLength(0);
+    expect(untrusted.findAll('img')).toHaveLength(0);
   });
 });

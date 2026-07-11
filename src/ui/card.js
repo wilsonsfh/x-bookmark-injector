@@ -3,7 +3,10 @@ import { CARD_ID } from '../selectors.js';
 const CARD_CSS = `
 #${CARD_ID} {
   --xbi-accent: #1d9bf0;
-  --xbi-on-accent: #f7f9f9;
+  --xbi-accent-text-light: #0b5f99;
+  --xbi-accent-text-dark: #8ecdf8;
+  --xbi-accent-text: var(--xbi-accent-text-light);
+  --xbi-on-accent: #0f1419;
   --xbi-space-1: 4px;
   --xbi-space-2: 8px;
   --xbi-space-3: 12px;
@@ -37,7 +40,7 @@ const CARD_CSS = `
   gap: var(--xbi-space-2);
 }
 #${CARD_ID} .xbi-header { justify-content: space-between; margin-bottom: var(--xbi-space-2); }
-#${CARD_ID} .xbi-label { color: var(--xbi-accent); font-size: var(--xbi-text-label); font-weight: 700; }
+#${CARD_ID} .xbi-label { color: var(--xbi-accent-text); font-size: var(--xbi-text-label); font-weight: 700; }
 #${CARD_ID} .xbi-chips { display: flex; flex-wrap: wrap; gap: var(--xbi-space-2); margin-bottom: var(--xbi-space-3); }
 #${CARD_ID} .xbi-chip {
   max-width: 100%;
@@ -47,7 +50,7 @@ const CARD_CSS = `
   font-size: var(--xbi-text-sm);
   overflow-wrap: anywhere;
 }
-#${CARD_ID} .xbi-chip-accent { border-color: var(--xbi-accent); color: var(--xbi-accent); }
+#${CARD_ID} .xbi-chip-accent { border-color: var(--xbi-accent); color: var(--xbi-accent-text); }
 #${CARD_ID} .xbi-author { min-width: 0; margin-bottom: var(--xbi-space-2); }
 #${CARD_ID} .xbi-avatar {
   width: var(--xbi-avatar-size);
@@ -68,6 +71,16 @@ const CARD_CSS = `
   object-fit: cover;
 }
 #${CARD_ID} .xbi-actions { margin-top: var(--xbi-space-3); }
+#${CARD_ID} .xbi-status { margin: var(--xbi-space-2) 0 0; font-size: var(--xbi-text-sm); }
+#${CARD_ID} .xbi-status[hidden] { display: none; }
+#${CARD_ID} .xbi-post-link {
+  display: inline-flex;
+  min-height: var(--xbi-target-size);
+  align-items: center;
+  color: var(--xbi-accent-text);
+  font-weight: 700;
+}
+#${CARD_ID} .xbi-post-link:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
 #${CARD_ID} .xbi-action {
   min-width: 0;
   min-height: var(--xbi-target-size);
@@ -92,12 +105,15 @@ const CARD_CSS = `
   background: var(--xbi-accent);
 }
 #${CARD_ID} .xbi-action-primary:hover { background: color-mix(in srgb, var(--xbi-accent) 88%, currentColor); }
-#${CARD_ID} .xbi-action:focus-visible { outline: 2px solid var(--xbi-accent); outline-offset: 2px; }
+#${CARD_ID} .xbi-action:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
 @media (max-width: 420px) {
   #${CARD_ID} .xbi-actions { align-items: stretch; flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) {
   #${CARD_ID} .xbi-action { transition: none; }
+}
+@media (prefers-color-scheme: dark) {
+  #${CARD_ID} { --xbi-accent-text: var(--xbi-accent-text-dark); }
 }`;
 
 function ordinal(n) {
@@ -106,17 +122,34 @@ function ordinal(n) {
   return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] ?? 'th'}`;
 }
 
+const POST_HOSTS = new Set(['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com']);
+const IMAGE_HOSTS = new Set(['pbs.twimg.com', 'abs.twimg.com', 'ton.twimg.com', 'video.twimg.com']);
+
+function trustedUrl(value, hosts, pathPattern) {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || !hosts.has(url.hostname.toLowerCase())) return null;
+    if (pathPattern && !pathPattern.test(url.pathname)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 export function formatCardMeta(bookmark, total, left) {
+  const postedAt = bookmark.createdAt ? new Date(bookmark.createdAt) : null;
+  const posted = postedAt && !Number.isNaN(postedAt.getTime())
+    ? `Posted ${new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(postedAt)}`
+    : 'Posted time unavailable';
   return {
     rank: `Saved #${bookmark.saveRank} of ${total} · ${ordinal(bookmark.saveRank)} oldest`,
-    posted: bookmark.createdAt
-      ? `Posted ${new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        timeZone: 'UTC',
-      }).format(new Date(bookmark.createdAt))}`
-      : 'Posted time unavailable',
+    posted,
     left: `${left} left`,
   };
 }
@@ -132,10 +165,9 @@ function chip(text, accent = false) {
   return node('span', text, `xbi-chip${accent ? ' xbi-chip-accent' : ''}`);
 }
 
-function action(label, primary, handler) {
+function action(label, primary) {
   const button = node('button', label, `xbi-action${primary ? ' xbi-action-primary' : ''}`);
   button.type = 'button';
-  button.addEventListener('click', handler);
   return button;
 }
 
@@ -156,9 +188,10 @@ export function buildCardElement(bookmark, stats, handlers) {
   card.append(chips);
 
   const authorRow = node('div', null, 'xbi-author');
-  if (bookmark.avatar) {
+  const avatarUrl = trustedUrl(bookmark.avatar, IMAGE_HOSTS);
+  if (avatarUrl) {
     const avatar = node('img', null, 'xbi-avatar');
-    avatar.src = bookmark.avatar;
+    avatar.src = avatarUrl;
     avatar.alt = '';
     avatar.width = 40;
     avatar.height = 40;
@@ -171,23 +204,62 @@ export function buildCardElement(bookmark, stats, handlers) {
   card.append(authorRow, node('p', bookmark.text, 'xbi-text'));
 
   const firstMedia = bookmark.media?.[0];
-  if (firstMedia?.url) {
+  const mediaUrl = trustedUrl(firstMedia?.url, IMAGE_HOSTS);
+  if (mediaUrl) {
     const image = node('img', null, 'xbi-media');
-    image.src = firstMedia.url;
+    image.src = mediaUrl;
     image.alt = '';
     image.loading = 'lazy';
     card.append(image);
   }
 
+  const postUrl = trustedUrl(bookmark.url, POST_HOSTS, /^\/[^/]+\/status\/\d+\/?$/);
+  if (postUrl) {
+    const link = node('a', 'View post on X', 'xbi-post-link');
+    link.href = postUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    card.append(link);
+  }
+
+  const status = node('p', null, 'xbi-status');
+  status.role = 'status';
+  status.setAttribute('aria-live', 'polite');
+  status.hidden = true;
+  card.append(status);
+
   const buttons = node('div', null, 'xbi-actions');
-  buttons.append(
-    action('Keep for later', false, handlers.onKeep),
-    action('Done ✓ Remove from X', true, handlers.onDone),
-  );
+  const keepButton = action('Keep for later', false);
+  const doneButton = action('Done ✓ Remove from X', true);
+  const controls = [keepButton, doneButton];
+  let actionPending = false;
+  const runAction = async (handler) => {
+    if (actionPending) return;
+    actionPending = true;
+    card.setAttribute('aria-busy', 'true');
+    status.hidden = true;
+    status.textContent = '';
+    controls.forEach((button) => { button.disabled = true; });
+    try {
+      const result = await handler();
+      if (result?.ok === false) {
+        status.textContent = typeof result.error === 'string'
+          ? result.error
+          : 'Could not update this bookmark. Try again.';
+        status.hidden = false;
+      }
+    } catch {
+      status.textContent = 'Could not update this bookmark. Try again.';
+      status.hidden = false;
+    } finally {
+      actionPending = false;
+      card.removeAttribute('aria-busy');
+      controls.forEach((button) => { button.disabled = false; });
+    }
+  };
+  keepButton.addEventListener('click', () => runAction(handlers.onKeep));
+  doneButton.addEventListener('click', () => runAction(handlers.onDone));
+  buttons.append(keepButton, doneButton);
   card.append(buttons);
-  card.addEventListener('dblclick', (event) => {
-    if (event?.target?.closest?.('button')) return;
-    window.open(bookmark.url, '_blank', 'noopener');
-  });
   return card;
 }

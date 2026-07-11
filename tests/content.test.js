@@ -6,7 +6,9 @@ class FakeElement {
     this.children = [];
     this.className = '';
     this.dataset = {};
+    this.disabled = false;
     this.eventListeners = new Map();
+    this.hidden = false;
     this.id = '';
     this.innerHTML = '';
     this.parentElement = null;
@@ -18,6 +20,10 @@ class FakeElement {
 
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
   }
 
   append(...children) {
@@ -146,14 +152,26 @@ const TEST_STATE = {
 
 async function loadContent(options = {}) {
   const fixture = makeFixture();
+  options.configureFixture?.(fixture);
   const location = { pathname: '/home' };
   const storageGet = options.storageGet ?? vi.fn().mockResolvedValue(TEST_STATE);
-  const sendMessage = vi.fn().mockResolvedValue({ ok: true });
+  const sendMessage = options.sendMessage ?? vi.fn().mockResolvedValue({ ok: true });
   const confirm = vi.fn().mockReturnValue(true);
   let mutationCallback;
   let observerOptions;
   let intervalCallback;
+  let frameCallback;
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const requestAnimationFrame = vi.fn((callback) => {
+    frameCallback ??= callback;
+    return 1;
+  });
+  const runFrame = async () => {
+    const callback = frameCallback;
+    frameCallback = null;
+    callback?.();
+    await flush();
+  };
 
   vi.stubGlobal('document', fixture.document);
   vi.stubGlobal('location', location);
@@ -162,6 +180,7 @@ async function loadContent(options = {}) {
     storage: { local: { get: storageGet } },
   });
   vi.stubGlobal('window', { confirm, open: vi.fn() });
+  vi.stubGlobal('requestAnimationFrame', requestAnimationFrame);
   vi.stubGlobal('MutationObserver', class {
     constructor(callback) {
       mutationCallback = callback;
@@ -175,6 +194,7 @@ async function loadContent(options = {}) {
     return 1;
   });
   vi.spyOn(console, 'debug').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
   await import('../src/content.js');
   await flush();
 
@@ -184,8 +204,15 @@ async function loadContent(options = {}) {
     flush,
     interval: async () => { intervalCallback(); await flush(); },
     location,
-    mutate: async () => { mutationCallback(); await flush(); },
+    mutate: async () => { mutationCallback(); await runFrame(); },
+    mutateBurst: async (count) => {
+      for (let index = 0; index < count; index += 1) mutationCallback();
+      const scheduled = requestAnimationFrame.mock.calls.length;
+      await runFrame();
+      return scheduled;
+    },
     observerOptions,
+    requestAnimationFrame,
     sendMessage,
     storageGet,
   };
@@ -224,6 +251,18 @@ describe('bookmark card injection', () => {
     expect(replacement.children[0].id).toBe('xbi-card');
     expect(fixture.body.querySelectorAll('#xbi-card')).toHaveLength(1);
     expect(fixture.storageGet).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces mutation bursts into one reposition pass', async () => {
+    const fixture = await loadContent();
+    const card = fixture.document.getElementById('xbi-card');
+    fixture.timeline.append(card);
+
+    const scheduled = await fixture.mutateBurst(3);
+
+    expect(scheduled).toBe(1);
+    expect(fixture.timeline.children[0]).toBe(card);
+    expect(fixture.body.querySelectorAll('#xbi-card')).toHaveLength(1);
   });
 
   it('removes on navigation and restores on return to Home', async () => {
@@ -274,6 +313,41 @@ describe('bookmark card injection', () => {
     expect(storageGet).toHaveBeenCalledTimes(2);
   });
 
+  it('retries after loading state fails', async () => {
+    const storageGet = vi.fn()
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockResolvedValue(TEST_STATE);
+    const fixture = await loadContent({ storageGet });
+
+    expect(fixture.document.getElementById('xbi-card')).toBeNull();
+    await fixture.mutate();
+
+    expect(fixture.document.getElementById('xbi-card')).not.toBeNull();
+    expect(storageGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries after building the card fails', async () => {
+    const fixture = await loadContent({
+      configureFixture: ({ document }) => {
+        const createElement = document.createElement;
+        let failArticle = true;
+        document.createElement = (tag) => {
+          if (tag === 'article' && failArticle) {
+            failArticle = false;
+            throw new Error('render failed');
+          }
+          return createElement(tag);
+        };
+      },
+    });
+
+    expect(fixture.document.getElementById('xbi-card')).toBeNull();
+    await fixture.mutate();
+
+    expect(fixture.document.getElementById('xbi-card')).not.toBeNull();
+    expect(fixture.storageGet).toHaveBeenCalledTimes(2);
+  });
+
   it('sends keep and confirmed done actions and dismisses the card', async () => {
     const fixture = await loadContent();
     const buttons = fixture.document.getElementById('xbi-card').findAll('button');
@@ -292,5 +366,44 @@ describe('bookmark card injection', () => {
     expect(fixture.confirm).toHaveBeenCalledWith('Remove this bookmark from X for real? You will have 6 seconds to Undo.');
     expect(fixture.sendMessage).toHaveBeenLastCalledWith({ type: 'XBI_ACTION', action: 'done', tweetId: '1806' });
     expect(fixture.document.getElementById('xbi-card')).toBeNull();
+  });
+
+  it('keeps the card and announces unsuccessful and rejected runtime actions', async () => {
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce({ ok: false, error: 'X did not confirm the action.' })
+      .mockRejectedValueOnce(new Error('runtime unavailable'));
+    const fixture = await loadContent({ sendMessage });
+    const card = fixture.document.getElementById('xbi-card');
+    const buttons = card.findAll('button');
+    const status = card.findAll('p').find((node) => node.className === 'xbi-status');
+
+    await buttons[0].eventListeners.get('click')();
+    expect(fixture.document.getElementById('xbi-card')).toBe(card);
+    expect(status.textContent).toBe('X did not confirm the action.');
+
+    await buttons[1].eventListeners.get('click')();
+    expect(fixture.document.getElementById('xbi-card')).toBe(card);
+    expect(status.textContent).toBe('Could not update this bookmark. Try again.');
+    expect(buttons.every((button) => !button.disabled)).toBe(true);
+  });
+
+  it('does not let a stale action response dismiss the next Home visit card', async () => {
+    let resolveAction;
+    const sendMessage = vi.fn(() => new Promise((resolve) => { resolveAction = resolve; }));
+    const fixture = await loadContent({ sendMessage });
+    const oldCard = fixture.document.getElementById('xbi-card');
+    const action = oldCard.findAll('button')[0].eventListeners.get('click')();
+
+    fixture.location.pathname = '/profile';
+    await fixture.interval();
+    fixture.location.pathname = '/home';
+    await fixture.interval();
+    const newCard = fixture.document.getElementById('xbi-card');
+
+    resolveAction({ ok: true });
+    await action;
+
+    expect(newCard).not.toBe(oldCard);
+    expect(fixture.document.getElementById('xbi-card')).toBe(newCard);
   });
 });

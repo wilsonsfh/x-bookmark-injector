@@ -4,10 +4,12 @@ import { CARD_ID, SEL, isHome } from './selectors.js';
 import { loadState } from './storage.js';
 import { buildCardElement } from './ui/card.js';
 
-let handledThisHomeVisit = false;
+let loadInFlight = false;
+let visitCompleted = false;
 let homeVisit = 0;
 let currentCard = null;
 let lastPath = location.pathname;
+let mutationFramePending = false;
 
 function findTimeline() {
   return document.querySelector(SEL.primaryColumn)?.querySelector(SEL.timeline) ?? null;
@@ -37,51 +39,74 @@ async function pinRandomCard() {
   if (!isHome()) { removeCard(); return; }
   if (!firstTimelineCell()?.parentElement) { removeCard(); return; }
   if (currentCard) { positionCard(); return; }
-  if (handledThisHomeVisit) return;
-  handledThisHomeVisit = true;
+  if (loadInFlight || visitCompleted) return;
+  loadInFlight = true;
   const visit = homeVisit;
 
-  const state = await loadState();
-  if (visit !== homeVisit) return;
-  const bookmark = pickBookmark(state.bookmarks, state.cleared, {
-    cooldownHours: state.settings.keepCooldownHours,
-  });
-  if (!bookmark) return;
-
-  const dismiss = () => {
-    removeCard();
-    currentCard = null;
-  };
-  const runAction = async (action) => {
-    const result = await chrome.runtime.sendMessage({
-      type: 'XBI_ACTION',
-      action,
-      tweetId: bookmark.id,
+  try {
+    const state = await loadState();
+    if (visit !== homeVisit) return;
+    const bookmark = pickBookmark(state.bookmarks, state.cleared, {
+      cooldownHours: state.settings.keepCooldownHours,
     });
-    if (result?.ok) dismiss();
-  };
-  currentCard = buildCardElement(
-    bookmark,
-    {
-      total: Object.keys(state.bookmarks).length,
-      left: countLeft(state.bookmarks, state.cleared),
-    },
-    {
-      onKeep: () => runAction('keep'),
-      onDone: async () => {
-        if (state.settings.confirmRealDelete && !state.settings.deleteConfirmed) {
-          const approved = window.confirm('Remove this bookmark from X for real? You will have 6 seconds to Undo.');
-          if (!approved) return;
-        }
-        await runAction('done');
-      },
-    },
-  );
+    if (!bookmark) {
+      visitCompleted = true;
+      return;
+    }
 
-  if (isHome()) positionCard();
+    let card;
+    const dismiss = () => {
+      if (currentCard !== card || homeVisit !== visit) return;
+      card.remove();
+      currentCard = null;
+    };
+    const runAction = async (action) => {
+      const result = await chrome.runtime.sendMessage({
+        type: 'XBI_ACTION',
+        action,
+        tweetId: bookmark.id,
+      });
+      if (result?.ok) dismiss();
+      return result;
+    };
+    card = buildCardElement(
+      bookmark,
+      {
+        total: Object.keys(state.bookmarks).length,
+        left: countLeft(state.bookmarks, state.cleared),
+      },
+      {
+        onKeep: () => runAction('keep'),
+        onDone: async () => {
+          if (state.settings.confirmRealDelete && !state.settings.deleteConfirmed) {
+            const approved = window.confirm('Remove this bookmark from X for real? You will have 6 seconds to Undo.');
+            if (!approved) return;
+          }
+          return runAction('done');
+        },
+      },
+    );
+    currentCard = card;
+    visitCompleted = true;
+
+    if (isHome()) positionCard();
+  } catch (error) {
+    if (visit === homeVisit) console.warn('[xbi] unable to render bookmark card', error);
+  } finally {
+    if (visit === homeVisit) loadInFlight = false;
+  }
 }
 
-const observer = new MutationObserver(() => void pinRandomCard());
+function schedulePin() {
+  if (mutationFramePending) return;
+  mutationFramePending = true;
+  requestAnimationFrame(() => {
+    mutationFramePending = false;
+    void pinRandomCard();
+  });
+}
+
+const observer = new MutationObserver(schedulePin);
 observer.observe(document.body, {
   childList: true,
   subtree: true,
@@ -95,7 +120,8 @@ setInterval(() => {
     homeVisit += 1;
     removeCard();
     currentCard = null;
-    handledThisHomeVisit = false;
+    loadInFlight = false;
+    visitCompleted = false;
     void pinRandomCard();
   }
 }, 500);
