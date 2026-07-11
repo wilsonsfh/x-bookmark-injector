@@ -5,6 +5,7 @@ import { buildCardElement, buildStatusCard, formatCardMeta } from '../src/ui/car
 class FakeElement {
   constructor(tagName) {
     this.tagName = tagName.toUpperCase();
+    this.attributes = new Map();
     this.children = [];
     this.dataset = {};
     this.disabled = false;
@@ -24,16 +25,27 @@ class FakeElement {
     }
   }
 
+  insertBefore(child, reference) {
+    const index = this.children.indexOf(reference);
+    if (index < 0) throw new Error('Reference is not a child');
+    this.children.splice(index, 0, child);
+    child.parentElement = this;
+  }
+
   addEventListener(type, handler) {
     this.eventListeners.set(type, handler);
   }
 
   setAttribute(name, value) {
-    this[name] = String(value);
+    this.attributes.set(name, String(value));
+  }
+
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
   }
 
   removeAttribute(name) {
-    delete this[name];
+    this.attributes.delete(name);
   }
 
   findAll(tagName) {
@@ -69,26 +81,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('formatCardMeta', () => {
   it('labels save order, posted date, and remaining count honestly', () => {
-    expect(formatCardMeta({ saveRank: 12, createdAt: '2026-06-21T13:37:00Z' }, 87, 74)).toEqual({
-      rank: 'Saved #12 of 87 · 12th oldest',
+    expect(formatCardMeta({ saveRank: 12, createdAt: '2026-06-21T13:37:00Z' }, 74)).toEqual({
       posted: 'Posted Jun 21, 2026',
       left: '74 left',
     });
   });
 
-  it('uses correct ordinal suffixes', () => {
-    expect(formatCardMeta({ saveRank: 1 }, 20, 20).rank).toContain('1st oldest');
-    expect(formatCardMeta({ saveRank: 2 }, 20, 20).rank).toContain('2nd oldest');
-    expect(formatCardMeta({ saveRank: 3 }, 20, 20).rank).toContain('3rd oldest');
-    expect(formatCardMeta({ saveRank: 11 }, 20, 20).rank).toContain('11th oldest');
-    expect(formatCardMeta({ saveRank: 12 }, 20, 20).rank).toContain('12th oldest');
-    expect(formatCardMeta({ saveRank: 13 }, 20, 20).rank).toContain('13th oldest');
-    expect(formatCardMeta({ saveRank: 21 }, 20, 20).rank).toContain('21st oldest');
-  });
-
   it('states when the posted time is unavailable', () => {
-    expect(formatCardMeta({ saveRank: 4 }, 9, 6).posted).toBe('Posted time unavailable');
-    expect(formatCardMeta({ saveRank: 4, createdAt: 'not-a-date' }, 9, 6).posted).toBe('Posted time unavailable');
+    expect(formatCardMeta({ saveRank: 4 }, 6).posted).toBe('Posted time unavailable');
+    expect(formatCardMeta({ saveRank: 4, createdAt: 'not-a-date' }, 6).posted).toBe('Posted time unavailable');
   });
 });
 
@@ -107,7 +108,47 @@ describe('buildStatusCard', () => {
 });
 
 describe('buildCardElement', () => {
-  it('builds a semantic Hybrid card with scoped tokens and overflow-safe user content', () => {
+  it('uses Zara-faithful native post anatomy without dashboard card chrome', () => {
+    installDom();
+    const card = buildCardElement(
+      {
+        author: 'Zara Zhang',
+        createdAt: '2026-06-21T13:37:00Z',
+        handle: '@zarazhangrui',
+        media: [],
+        saveRank: 12,
+        text: 'I hoard X bookmarks and never read them.',
+        url: 'https://x.com/zarazhangrui/status/1806',
+      },
+      { total: 87, left: 74 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const css = card.findAll('style')[0].textContent;
+    const provenance = card.findAll('div').find((element) => element.className === 'xbi-provenance');
+    const bodyLink = card.children.find((element) => element.className === 'xbi-post-body-link');
+    const avatarSlot = bodyLink.children.find((element) => element.className === 'xbi-avatar-slot');
+    const main = bodyLink.children.find((element) => element.className === 'xbi-main');
+    const utility = card.findAll('div').find((element) => element.className === 'xbi-utility');
+    const readLink = card.findAll('a').find((element) => element.className === 'xbi-post-link');
+
+    expect(css).toContain('grid-template-columns: var(--xbi-avatar-size) minmax(0, 1fr)');
+    expect(css).not.toContain('border-left:');
+    expect(css).not.toContain('border-top:');
+    expect(css).not.toContain('.xbi-chip');
+    expect(provenance.textContent).toBe('📌 From your bookmarks · #12 of 87 · 74 left');
+    expect(avatarSlot.tagName).toBe('DIV');
+    expect(main.children).toContain(provenance);
+    expect(utility.findAll('a')).toHaveLength(1);
+    expect(utility.findAll('button')).toHaveLength(2);
+    expect(readLink.textContent).toBe('Open on X ↗');
+    expect(readLink.getAttribute('aria-label')).toBe('Open @zarazhangrui’s post on X (opens in new tab)');
+    expect(card.findAll('button').map((button) => button.textContent)).toEqual([
+      'Keep for later',
+      'Done · Remove',
+    ]);
+  });
+
+  it('builds a semantic native post with scoped tokens and overflow-safe user content', () => {
     installDom();
     const bookmark = {
       author: 'A'.repeat(120),
@@ -125,7 +166,7 @@ describe('buildCardElement', () => {
     expect(card.tagName).toBe('ARTICLE');
     expect(card.id).toBe('xbi-card');
     expect(card.dataset.testid).toBe('cellInnerDiv');
-    expect(card['aria-label']).toBe('Bookmark resurfaced');
+    expect(card.getAttribute('aria-label')).toBe('Bookmark resurfaced');
     expect(card.findAll('style')[0].textContent).toContain('--xbi-accent: #1d9bf0');
     expect(card.findAll('style')[0].textContent).toContain('overflow-wrap: anywhere');
     expect(card.findAll('style')[0].textContent).toContain('@media (prefers-reduced-motion: reduce)');
@@ -146,7 +187,7 @@ describe('buildCardElement', () => {
     const buttons = card.findAll('button');
     const css = card.findAll('style')[0].textContent;
 
-    expect(buttons.map((button) => button.textContent)).toEqual(['Keep for later', 'Done ✓ Remove from X']);
+    expect(buttons.map((button) => button.textContent)).toEqual(['Keep for later', 'Done · Remove']);
     expect(buttons.every((button) => button.type === 'button')).toBe(true);
     expect(css).toContain('--xbi-target-size: 36px');
     expect(css).toContain('min-height: var(--xbi-target-size)');
@@ -188,7 +229,7 @@ describe('buildCardElement', () => {
       'Views 290K',
       'Bookmarks 816',
     ]);
-    expect(metrics.map((element) => element['aria-label'])).toEqual([
+    expect(metrics.map((element) => element.getAttribute('aria-label'))).toEqual([
       '127 replies',
       '84 reposts',
       '1,200 likes',
@@ -224,9 +265,12 @@ describe('buildCardElement', () => {
     const onAccent = cssToken(css, '--xbi-on-accent');
 
     expect(css).toContain('--xbi-accent-text: currentColor');
+    expect(css).toContain('--xbi-link: color-mix(in srgb, var(--xbi-accent) 65%, currentColor)');
     expect(css).not.toContain('@media (prefers-color-scheme: dark)');
     expect(contrastRatio('#e7e9ea', '#000000')).toBeGreaterThanOrEqual(4.5); // OS light, X dark.
     expect(contrastRatio('#0f1419', '#ffffff')).toBeGreaterThanOrEqual(4.5); // OS dark, X light.
+    expect(contrastRatio('#186ca5', '#ffffff')).toBeGreaterThanOrEqual(4.5); // X light link mix.
+    expect(contrastRatio('#64b6ee', '#000000')).toBeGreaterThanOrEqual(4.5); // X dark link mix.
     expect(contrastRatio(onAccent, accentFill)).toBeGreaterThanOrEqual(4.5);
   });
 
@@ -281,13 +325,13 @@ describe('buildCardElement', () => {
     expect(onKeep).toHaveBeenCalledOnce();
     expect(onDone).not.toHaveBeenCalled();
     expect(buttons.every((button) => button.disabled)).toBe(true);
-    expect(card['aria-busy']).toBe('true');
+    expect(card.getAttribute('aria-busy')).toBe('true');
 
     resolveAction({ ok: true });
     await pending;
     await duplicate;
     expect(buttons.every((button) => !button.disabled)).toBe(true);
-    expect(card['aria-busy']).toBeUndefined();
+    expect(card.getAttribute('aria-busy')).toBeNull();
   });
 
   it('announces rejected and unsuccessful actions without removing the card', async () => {
@@ -304,7 +348,7 @@ describe('buildCardElement', () => {
 
     await expect(buttons[0].eventListeners.get('click')()).resolves.toBeUndefined();
     expect(status.role).toBe('status');
-    expect(status['aria-live']).toBe('polite');
+    expect(status.getAttribute('aria-live')).toBe('polite');
     expect(status.hidden).toBe(false);
     expect(status.textContent).toBe('Could not update this bookmark. Try again.');
 
@@ -335,6 +379,95 @@ describe('buildCardElement', () => {
     expect(status.hidden).toBe(false);
   });
 
+  it('clamps long posts and expands or collapses them in place', async () => {
+    installDom();
+    const longText = 'This is a long bookmarked post with useful detail. '.repeat(20);
+    const card = buildCardElement(
+      { author: 'Long Author', media: [], saveRank: 1, text: longText },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const text = card.findAll('p').find((paragraph) => paragraph.textContent === longText);
+    const expand = card.findAll('button').find((button) => button.className === 'xbi-expand');
+
+    expect(text.className).toBe('xbi-text xbi-text-collapsed');
+    expect(expand.textContent).toBe('Read more');
+    expect(expand.getAttribute('aria-expanded')).toBe('false');
+    expect(expand.getAttribute('aria-controls')).toBe(text.id);
+
+    await expand.eventListeners.get('click')();
+    expect(text.className).toBe('xbi-text');
+    expect(expand.textContent).toBe('Show less');
+    expect(expand.getAttribute('aria-expanded')).toBe('true');
+
+    await expand.eventListeners.get('click')();
+    expect(text.className).toBe('xbi-text xbi-text-collapsed');
+    expect(expand.textContent).toBe('Read more');
+  });
+
+  it('does not add Read more to a short post', () => {
+    installDom();
+    const card = buildCardElement(
+      { author: 'Short Author', media: [], saveRank: 1, text: 'A concise bookmark.' },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+
+    expect(card.findAll('button').some((button) => button.className === 'xbi-expand')).toBe(false);
+    expect(card.findAll('p').find((paragraph) => paragraph.textContent === 'A concise bookmark.').className)
+      .toBe('xbi-text');
+  });
+
+  it('uses rendered six-line overflow to reveal Read more below the character threshold', () => {
+    installDom();
+    let measure;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback) { measure = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    const textValue = 'Short characters that wrap across many narrow rendered lines.';
+    const card = buildCardElement(
+      { author: 'Wrapped Author', media: [], saveRank: 1, text: textValue },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const text = card.findAll('p').find((paragraph) => paragraph.textContent === textValue);
+    card.isConnected = true;
+    text.clientHeight = 96;
+    text.scrollHeight = 140;
+
+    measure();
+    const expand = card.findAll('button').find((button) => button.className === 'xbi-expand');
+
+    expect(text.className).toBe('xbi-text xbi-text-collapsed');
+    expect(expand.hidden).toBe(false);
+  });
+
+  it('links the full native post body to the exact bookmarked X status', () => {
+    installDom();
+    const card = buildCardElement(
+      {
+        author: 'Zara Zhang',
+        handle: '@zarazhangrui',
+        media: [],
+        saveRank: 1,
+        text: 'Open the full post and its context',
+        url: 'https://x.com/zarazhangrui/status/1806',
+      },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const bodyLink = card.findAll('a').find((link) => link.className === 'xbi-post-body-link');
+
+    expect(bodyLink.href).toBe('https://x.com/zarazhangrui/status/1806');
+    expect(bodyLink.target).toBe('_blank');
+    expect(bodyLink.rel).toBe('noopener noreferrer');
+    expect(bodyLink.findAll('p').some((paragraph) => paragraph.textContent === 'Open the full post and its context')).toBe(true);
+    expect(bodyLink.findAll('button')).toHaveLength(0);
+    expect(card.findAll('button')).toHaveLength(2);
+  });
+
   it('renders a visible keyboard-accessible link for a valid X post URL', () => {
     installDom();
     const card = buildCardElement(
@@ -343,9 +476,10 @@ describe('buildCardElement', () => {
       { onKeep: vi.fn(), onDone: vi.fn() },
     );
 
-    const link = card.findAll('a')[0];
+    const link = card.findAll('a').find((element) => element.className === 'xbi-post-link');
 
-    expect(link.textContent).toBe('View post on X');
+    expect(link.textContent).toBe('Open on X ↗');
+    expect(link.getAttribute('aria-label')).toBe('Open @zara’s post on X (opens in new tab)');
     expect(link.href).toBe('https://x.com/zara/status/1');
     expect(link.target).toBe('_blank');
     expect(link.rel).toBe('noopener noreferrer');
@@ -372,7 +506,8 @@ describe('buildCardElement', () => {
       { onKeep: vi.fn(), onDone: vi.fn() },
     );
 
-    expect(trusted.findAll('a')[0].href).toBe('https://twitter.com/zara/status/1');
+    expect(trusted.findAll('a').find((element) => element.className === 'xbi-post-link').href)
+      .toBe('https://twitter.com/zara/status/1');
     expect(untrusted.findAll('a')).toHaveLength(0);
     expect(untrusted.findAll('img')).toHaveLength(0);
   });

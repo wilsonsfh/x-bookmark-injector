@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **2026-07-12 visual correction:** Task 10's original Hybrid snippets are historical
+> and must not be replayed. The owner rejected the rail/tint/chips/dashboard treatment.
+> Current source follows `docs/mockups/2026-07-12-simple-native-card-comparison.html`
+> option B and the revised design spec: native post anatomy + one quiet provenance line
+> + six-line Read more/Show less + full-body exact-status link + compact
+> Open-on-X/Keep/Done footer.
+
 **Goal:** A Chromium MV3 extension that pins one random un-cleared X bookmark at the top of the For You feed on each Home load, with save-rank + timestamp + count-left, and Done (real delete)/Keep (local) actions.
 
 **Architecture:** Pure, framework-free core modules (ranking/selection/merge/count/normalize) are unit-tested with Vitest and imported by the extension surfaces. `inpage.js` (MAIN world) captures auth and executes GraphQL in X's own page context so session cookies are reliable; `content.js` (ISOLATED world) bridges page messages, injects the card, and observes the timeline; `background.js` (service worker) orchestrates sync and owns persisted state; `popup` is the dashboard. esbuild bundles `src/` → `dist/`; the unpacked extension loads from `dist/`.
@@ -15,7 +22,7 @@
 - **Fetch strategy:** intercept + replay the app's own auth/templates in MAIN world; never commit a Bearer/cookie fallback.
 - **Save rank:** `#1 = oldest saved`, `#N = newest saved` (reverse of X's LIFO order). Order is reliable; never fabricate exact "bookmarked-at" time.
 - **Count left:** `total − (cleared where action==="done")`. "Keep" does NOT decrement.
-- **Card:** Hybrid style, pinned as the first cell of For You on each Home load. Reference: `docs/mockups/2026-07-10-injected-card-directions.html`.
+- **Card:** Zara-faithful native post, pinned as the first cell of For You on each Home load; no rail, tint, chips or dashboard shell. Reference: `docs/mockups/2026-07-12-simple-native-card-comparison.html` option B.
 - **Done** → real `DeleteBookmark` (one-time confirm + Undo via `CreateBookmark`). **Keep** → local dismiss + `settings.keepCooldownHours` (default 72).
 - TDD for all pure core; DRY; YAGNI; frequent commits. Node ≥ 18.
 - Spec: `docs/superpowers/specs/2026-07-10-x-bookmark-injector-design.md`.
@@ -915,7 +922,7 @@ describe('applyDefaults', () => {
       bookmarks: {}, cleared: {},
       meta: { total: 0, lastSync: null, syncStatus: 'idle', syncError: null },
       auth: { queryIds: {} },
-      settings: { confirmRealDelete: true, deleteConfirmed: false, keepCooldownHours: 72, syncEveryHours: 24, cardStyle: 'hybrid' },
+      settings: { confirmRealDelete: true, deleteConfirmed: false, keepCooldownHours: 72, syncEveryHours: 24 },
     });
   });
 
@@ -946,7 +953,6 @@ export const DEFAULT_STATE = Object.freeze({
     deleteConfirmed: false,
     keepCooldownHours: 72,
     syncEveryHours: 24,
-    cardStyle: 'hybrid',
   },
 });
 
@@ -981,7 +987,10 @@ git add src/storage.js tests/storage.test.js
 git commit -m "feat: define local extension state and storage helpers"
 ```
 
-## Task 10: Real card rendering (ui/card.js) + wire into content
+## Task 10: Real card rendering (SUPERSEDED VISUAL SNIPPETS)
+
+> Do not implement the Hybrid/chip markup below. It is retained only as the original
+> execution record. Use the revised spec and current `src/ui/card.js` native-post anatomy.
 
 **Files:**
 - Create: `src/ui/card.js`, `tests/card.test.js`
@@ -1173,7 +1182,7 @@ chrome.storage.local.set({
 });
 ```
 
-Reload `x.com/home`. Expected: real-data Hybrid card is first and says `Saved #1 of 1`. The real sync verifies multi-item ranks/counts in Task 12.
+Reload `x.com/home`. Expected: the real-data native bookmark post is first and says `#1 of 1`. The real sync verifies multi-item ranks/counts in Task 12.
 
 - [ ] **Step 7: Commit**
 
@@ -1985,7 +1994,7 @@ The native X iOS app cannot host this extension. A future iOS companion would be
 - [ ] `npm test` passes and `npm run build` succeeds from a clean checkout.
 - [ ] Extension loads from `dist/` with no manifest/service-worker errors.
 - [ ] No card on Profile, Search, Bookmarks, Following, or logged-out pages.
-- [ ] Exactly one Hybrid card is first on For You; no duplicate while scrolling.
+- [ ] Exactly one Zara-faithful native bookmark post is first on For You; no duplicate while scrolling.
 - [ ] Reloading Home chooses a random eligible item; rank is stable across reloads.
 - [ ] Rank set is contiguous `1..N`; #1 matches oldest item in X Bookmarks.
 - [ ] Posted date matches the tweet; no copy claims an exact bookmarked-at time.

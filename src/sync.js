@@ -17,6 +17,7 @@ export async function collectBookmarkPages(fetchPage, { maxPages = 100, sleep = 
     throw new Error('maxPages must be an integer from 1 to 100');
   }
   const tweets = [];
+  const seenTweetIds = new Set();
   const seenCursors = new Set();
   let cursor = null;
 
@@ -26,9 +27,17 @@ export async function collectBookmarkPages(fetchPage, { maxPages = 100, sleep = 
       || (result.nextCursor !== null && typeof result.nextCursor !== 'string')) {
       throw new Error('Bookmark pagination response invalid');
     }
-    tweets.push(...result.tweets);
+    const newTweets = result.tweets.filter((tweet) => {
+      const id = tweet?.rest_id ?? tweet?.legacy?.id_str;
+      if (typeof id !== 'string' || !id) return true;
+      if (seenTweetIds.has(id)) return false;
+      seenTweetIds.add(id);
+      return true;
+    });
+    tweets.push(...newTweets);
     if (!result.nextCursor) return tweets;
     if (seenCursors.has(result.nextCursor)) {
+      if (newTweets.length === 0) return tweets;
       throw new Error('Bookmark pagination cursor repeated');
     }
     seenCursors.add(result.nextCursor);

@@ -70,7 +70,6 @@ const OPERATIONAL_STATE = {
     deleteConfirmed: false,
     keepCooldownHours: 72,
     syncEveryHours: 24,
-    cardStyle: 'hybrid',
   },
 };
 
@@ -124,8 +123,11 @@ async function loadOperationalBackground({
     await sessionSetImplementation(patch);
     stores.session = { ...stores.session, ...structuredClone(patch) };
   });
-  const sendMessage = vi.fn(async (_tabId, message) => {
-    if (message.type === 'XBI_GET_PAGE_AUTH') return structuredClone(pageAuth);
+  const sendMessage = vi.fn(async (tabId, message) => {
+    if (message.type === 'XBI_GET_PAGE_AUTH') {
+      const auth = typeof pageAuth === 'function' ? await pageAuth(tabId) : pageAuth;
+      return structuredClone(auth);
+    }
     if (message.type === 'XBI_PAGE_REQUEST') return pageRequest(message.request);
     return undefined;
   });
@@ -304,6 +306,46 @@ describe('service-worker bookmark sync', () => {
     expect(JSON.stringify(state)).not.toContain('session-secret');
     expect(state).not.toHaveProperty('operationHeaders');
     expect(state).not.toHaveProperty('operationTemplates');
+  });
+
+  it('uses another open X tab when the active tab has not loaded the extension bridge', async () => {
+    const tabQuery = vi.fn().mockResolvedValue([
+      { id: 8, active: true },
+      { id: 9, active: false },
+    ]);
+    const pageAuth = vi.fn(async (tabId) => {
+      if (tabId === 8) throw new Error('Receiving end does not exist');
+      return SESSION_AUTH;
+    });
+    const background = await loadOperationalBackground({
+      pageAuth,
+      pageRequest: vi.fn().mockResolvedValue({ ok: true, status: 200, payload: bookmarkPayload(['new']) }),
+      tabQuery,
+    });
+
+    await expect(background.invoke({ type: 'XBI_SYNC' }, {})).resolves.toEqual({ ok: true, total: 1 });
+    expect(background.sendMessage.mock.calls.some(([tabId, message]) => (
+      tabId === 9 && message.type === 'XBI_PAGE_REQUEST'
+    ))).toBe(true);
+  });
+
+  it('falls back from an unauthenticated sender tab to another captured X tab', async () => {
+    const tabQuery = vi.fn().mockResolvedValue([{ id: 9, active: false }]);
+    const pageAuth = vi.fn(async (tabId) => {
+      if (tabId === 8) throw new Error('sender bridge unavailable');
+      return SESSION_AUTH;
+    });
+    const background = await loadOperationalBackground({
+      pageAuth,
+      pageRequest: vi.fn().mockResolvedValue({ ok: true, status: 200, payload: bookmarkPayload(['new']) }),
+      tabQuery,
+    });
+
+    await expect(background.invoke({ type: 'XBI_SYNC' }, { tab: { id: 8 } }))
+      .resolves.toEqual({ ok: true, total: 1 });
+    expect(background.sendMessage.mock.calls.some(([tabId, message]) => (
+      tabId === 9 && message.type === 'XBI_PAGE_REQUEST'
+    ))).toBe(true);
   });
 
   it('publishes a fully paginated cache once all pages succeed', async () => {

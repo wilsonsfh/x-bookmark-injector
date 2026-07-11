@@ -160,14 +160,30 @@ async function loadProjectedState() {
 }
 
 async function xTab(sender) {
-  if (Number.isInteger(sender.tab?.id)) return sender.tab;
-  const [tab] = await chrome.tabs.query({
-    active: true,
+  const tabs = await chrome.tabs.query({
     currentWindow: true,
     url: ['https://x.com/*', 'https://twitter.com/*'],
   });
-  if (!Number.isInteger(tab?.id)) throw new Error('Open x.com in the active tab');
-  return tab;
+  const senderTab = Number.isInteger(sender.tab?.id) ? sender.tab : null;
+  const candidates = [
+    ...(senderTab ? [senderTab] : []),
+    ...(Array.isArray(tabs) ? tabs : []),
+  ]
+    .filter((tab, index, all) => Number.isInteger(tab?.id)
+      && all.findIndex((candidate) => candidate.id === tab.id) === index)
+    .sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
+  if (candidates.length === 0) {
+    throw new Error('Open x.com in the active tab');
+  }
+  for (const tab of candidates) {
+    try {
+      const pageAuth = await chrome.tabs.sendMessage(tab.id, { type: 'XBI_GET_PAGE_AUTH' });
+      if (pageAuth && typeof pageAuth === 'object' && pageAuth.bearer && pageAuth.csrf) return tab;
+    } catch {
+      // A tab opened before extension load has no content-script receiver; try another X tab.
+    }
+  }
+  throw new Error('X session auth not captured; reload x.com');
 }
 
 async function authFor(tabId) {

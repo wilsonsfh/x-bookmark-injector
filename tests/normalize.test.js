@@ -55,6 +55,30 @@ describe('normalizeTweet', () => {
     expect(normalizeTweet(tweet).media).toEqual([]);
   });
 
+  it('supports current X user core/avatar fields and full Note Tweet text', () => {
+    expect(normalizeTweet({
+      rest_id: '1812',
+      legacy: { full_text: 'Truncated fallback' },
+      note_tweet: {
+        note_tweet_results: { result: { text: 'The complete long-form bookmarked post' } },
+      },
+      core: {
+        user_results: {
+          result: {
+            core: { name: 'Current Shape Author', screen_name: 'current_author' },
+            avatar: { image_url: 'https://pbs.twimg.com/current-avatar.jpg' },
+          },
+        },
+      },
+    })).toMatchObject({
+      author: 'Current Shape Author',
+      handle: '@current_author',
+      avatar: 'https://pbs.twimg.com/current-avatar.jpg',
+      text: 'The complete long-form bookmarked post',
+      url: 'https://x.com/current_author/status/1812',
+    });
+  });
+
   it('returns null when id is missing', () => {
     expect(normalizeTweet({ legacy: {} })).toBeNull();
   });

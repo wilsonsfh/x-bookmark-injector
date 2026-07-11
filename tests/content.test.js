@@ -22,6 +22,10 @@ class FakeElement {
     this.attributes.set(name, String(value));
   }
 
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+
   removeAttribute(name) {
     this.attributes.delete(name);
   }
@@ -462,6 +466,7 @@ describe('bookmark card injection', () => {
     await buttons[0].eventListeners.get('click')();
     expect(fixture.sendMessage).toHaveBeenCalledWith({ type: 'XBI_ACTION', action: 'keep', tweetId: '1806' });
     expect(fixture.document.getElementById('xbi-card')).toBeNull();
+    expect(fixture.document.activeElement).toBe(fixture.timeline.children[0]);
 
     fixture.location.pathname = '/profile';
     await fixture.interval();
@@ -804,12 +809,15 @@ describe('bookmark card injection', () => {
     fixture.location.pathname = '/home';
     await fixture.interval();
     const newCard = fixture.document.getElementById('xbi-card');
+    const newDoneButton = newCard.findAll('button')[1];
+    newDoneButton.focus();
 
     resolveAction({ ok: true });
     await action;
 
     expect(newCard).not.toBe(oldCard);
     expect(fixture.document.getElementById('xbi-card')).toBe(newCard);
+    expect(fixture.document.activeElement).toBe(newDoneButton);
   });
 
   it('sanitizes page captures before retaining and forwarding session auth', async () => {

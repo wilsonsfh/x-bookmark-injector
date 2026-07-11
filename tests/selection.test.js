@@ -5,6 +5,10 @@ const bm = { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } };
 const first = () => 0; // rng stub -> picks pool[0]
 
 describe('pickBookmark', () => {
+  it('uses the injected random value across the eligible pool', () => {
+    expect(pickBookmark(bm, {}, { rng: () => 0.8 }).id).toBe('c');
+  });
+
   it('never returns a done item', () => {
     const cleared = { a: { action: 'done' } };
     const got = pickBookmark(bm, cleared, { rng: first });

@@ -1,10 +1,134 @@
 # X Bookmark Injector
 
-A private Chromium MV3 extension that puts one random saved X bookmark at the top of the **For You** feed. It shows the bookmark's save-order rank, the post's published date, and how many cached bookmarks remain.
+A private Chromium MV3 extension that puts one random saved X bookmark at the top of the **For You** feed as a simple native-looking post. It shows the bookmark's save-order rank, the post's published date, and how many cached bookmarks remain.
 
 ## Release status
 
-The code has automated unit and build coverage, but the current undocumented X integration has **not** passed the live logged-in manual gate. Live operation capture, one successful Bookmarks request and full sync, selector/visual checks on the current X UI, and a real DeleteBookmark/CreateBookmark Undo round trip remain unchecked in [`docs/E2E_CHECKLIST.md`](docs/E2E_CHECKLIST.md). Treat this as unreleased and do not trust **Done** with important bookmarks until that checklist is completed.
+The 2026-07-12 live run confirmed that the unpacked extension loads, captures current X data, completes pagination, injects Option B first on Home, shows the real author, opens the exact bookmarked status from the post body, and expands/collapses long text with a six-line Read more treatment. The full checklist—including the real DeleteBookmark/CreateBookmark Undo round trip—remains open in [`docs/E2E_CHECKLIST.md`](docs/E2E_CHECKLIST.md). Do not trust **Done · Remove** with important bookmarks until those destructive-action checks are completed.
+
+## What it does
+
+- Injects exactly one random eligible bookmark before the first real post in **For You**.
+- Looks like a normal X post rather than a separate dashboard card.
+- Shows stable save-order position (`#k of N`), the post's published date, and remaining count.
+- Renders current X author/avatar fields, Note Tweet text, first media item, alt text, and available engagement counts.
+- Clamps long posts to six rendered lines with `Read more` / `Show less`.
+- Opens the exact bookmarked status from the full non-action body or `Open on X` control.
+- Keeps a bookmark locally for later or removes it from X with a bounded Undo/reconciliation path.
+- Provides a popup for sync status, counts, oldest-first browsing, settings, and recovered Undo.
+
+## Tech stack
+
+| Layer | Technology | Why |
+| --- | --- | --- |
+| Extension | Chromium Manifest V3 | Native content scripts, MAIN/ISOLATED worlds, service worker, popup, local/session storage |
+| Language | JavaScript ES modules | Small dependency surface and direct browser APIs |
+| Bundling | esbuild 0.25 | Produces Chrome-114-targeted IIFE entry bundles in `dist/` |
+| Tests | Vitest 3.2 | Fast pure-core, fake-DOM, message-bridge, service-worker, race and recovery tests |
+| Persistence | `chrome.storage.local` + `chrome.storage.session` | Durable cache/settings/intents plus restart-safe, time-bounded Undo authorization |
+| X integration | Captured internal GraphQL request templates | Reuses the logged-in page session without a project backend or developer app |
+| UI | Semantic DOM + scoped CSS | Native X anatomy, theme inheritance, safe `textContent`, accessible controls |
+
+Runtime dependencies are deliberately zero; esbuild/Vitest/Vite are development-only. `npm audit` reports zero known vulnerabilities at the verified lockfile.
+
+## Architecture
+
+```text
+┌──────────────────────────── x.com page ────────────────────────────┐
+│ inpage.js (MAIN world)                                             │
+│ • observes X's own allowlisted GraphQL requests                    │
+│ • captures bounded operation IDs/headers/templates in memory       │
+│ • executes only validated https://x.com/i/api/graphql/* requests   │
+└───────────────────────────┬────────────────────────────────────────┘
+                            │ validated window bridge
+┌───────────────────────────▼────────────────────────────────────────┐
+│ content.js (ISOLATED world)                                       │
+│ • relays page requests/results                                    │
+│ • detects Home + selected For You tab                             │
+│ • selects one random eligible bookmark and pins the native card   │
+│ • owns Read more, Keep, Done confirmation, and Undo feedback       │
+└───────────────────────────┬────────────────────────────────────────┘
+                            │ chrome.runtime messages
+┌───────────────────────────▼────────────────────────────────────────┐
+│ background.js (MV3 service worker)                                │
+│ • resolves an authenticated X tab                                 │
+│ • paginates/sanitizes/deduplicates/ranks transactionally           │
+│ • serializes sync/settings/actions                                │
+│ • runs the durable Delete → reconcile → Undo saga                 │
+└───────────────┬──────────────────────────────┬─────────────────────┘
+                │                              │
+     chrome.storage.local            chrome.storage.session
+     cache, rank, settings,           active Undo authorization
+     query IDs, durable intents       and expiry window
+                │
+┌───────────────▼────────────────────────────────────────────────────┐
+│ popup.js + popup.html                                              │
+│ progress, sync/errors, oldest-first list, actions, recovered Undo  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Component boundaries
+
+| Module | Responsibility |
+| --- | --- |
+| `src/core/*` | Pure normalization, ranking, merge, count and random/cooldown selection |
+| `src/x-api/*` | Authenticated request construction and strict bookmark response parsing |
+| `src/bridge.js` | Sanitized capture schema and request/result validation across worlds |
+| `src/inpage.js` | MAIN-world interception and constrained page-session fetch executor |
+| `src/content.js` | Timeline lifecycle, card insertion, post interaction and page relay |
+| `src/background.js` | Sync orchestration, persistence, retries, mutation saga and messaging |
+| `src/ui/card.js` | Native post rendering, safe URLs/media, line clamp and accessible actions |
+| `src/popup.js` | Progress dashboard, sync/settings controls and destructive-action gating |
+
+### Main flows
+
+**Sync:** popup/content requests sync → background resolves a captured X tab → MAIN world executes paginated Bookmarks requests → every page is schema-validated → duplicate IDs are removed → ranks are assigned (`#1 = oldest`) → the cache is published only after the complete run succeeds. Failed, malformed, rate-limited, partial, or stale-query runs retain the previous cache.
+
+**Feed:** content detects `/home` with the **For You** tab selected → filters Done/reconciliation/cooling-down records → chooses through injected `Math.random` → builds one native post → keeps it first through timeline replacement without duplicating it.
+
+**Delete/Undo:** background persists a pre-mutation intent and bookmark snapshot → sends `DeleteBookmark` → accepts only the exact operation-specific success schema → publishes Done + a six-second Undo window. MV3 restarts, local/session storage failures, concurrent sync, and ambiguous 5xx/post-dispatch outcomes retain a truthful reconciliation/restore path. `CreateBookmark` success restores both X and local cache state.
+
+## Tradeoffs considered
+
+| Decision | Chosen | Rejected alternatives | Tradeoff |
+| --- | --- | --- | --- |
+| X access | Intercept and replay the logged-in page's internal GraphQL | Official OAuth API; DOM scraping | No developer app/cost and preserves media/context, but undocumented endpoints may violate X policy and can change |
+| Request execution | MAIN-world constrained fetch | Service-worker cross-origin fetch | Reliable page cookies/session semantics, at the cost of a validated `postMessage` bridge |
+| Storage | Local-only extension state | Project backend/cloud sync | No server/telemetry/secrets service; state is profile-local and not multi-device |
+| Surfacing | Random eligible bookmark per Home load | Oldest-only, newest-only, every-N-post injection | Discovery stays fresh; chronological rank keeps the random choice legible |
+| Card design | Zara-faithful native Option B | Hybrid rail/tint/chips; ultra-minimal text actions | Blends into the feed while retaining visible Keep/Remove actions; less visual separation from X content |
+| Long text | Six rendered-line clamp + measured overflow | Hard character cut; always full text; open-only | Preserves words/languages and feed rhythm, with a small ResizeObserver/toggle interaction |
+| Parsing | Strict allowlisted schema, fail closed | Permissive recursive extraction | Protects cache integrity but may require updates when X adds a new valid entry shape |
+| Pagination | Bounded 100-page loop; repeated cursor accepted only with zero new IDs | Always reject repeats; unlimited pagination | Handles X's live terminal repeat without allowing infinite/new-data loops |
+| Mutations | Durable intent/reconciliation saga | Memory-only Done/Undo; optimistic local mutation | Handles MV3 restarts and partial failures, but adds state-machine complexity |
+| iOS | Separate future native/official-API companion | Pretend Chromium extension can modify native X app | Honest platform boundary; no native-app support today |
+
+## Project structure
+
+```text
+manifest.json            MV3 permissions and entrypoints
+build.mjs                deterministic src/public → dist build
+src/                     extension source by responsibility
+tests/                   290 unit/integration/race/recovery tests
+fixtures/                trimmed X GraphQL response fixture
+public/popup.html         popup shell and scoped styling
+docs/E2E_CHECKLIST.md     live release evidence gate
+docs/mockups/             visual comparisons and selected Option B
+docs/superpowers/         approved design spec and implementation history
+```
+
+## Verification snapshot
+
+Verified on 2026-07-12:
+
+```text
+npm test                         290/290 passed (15 files)
+npm run build                    passed
+npm audit --audit-level=moderate 0 vulnerabilities
+git diff --check                 passed
+```
+
+Live Option B evidence: extension load, current-X capture, HTTP-200 pagination, author/avatar, first-position native post, exact-status body/Open navigation, and six-line Read more/Show less passed. Destructive and broader route/theme/storage checks remain tracked in the E2E checklist.
 
 ## Install locally
 
@@ -29,6 +153,16 @@ Repeat these steps if X rotates operation IDs or the popup reports missing captu
 - Save rank is not a bookmark timestamp. X does not expose the historical date or time when you clicked Bookmark, and this extension does not infer or invent one.
 - `Posted Jun 21, 2026` comes from the post's `created_at` value and is formatted as a UTC calendar date. It describes when the post was published, not when it was bookmarked.
 - `N left` is the cached bookmark count minus items successfully marked Done. Keep for later does not reduce it.
+
+## In-feed design
+
+The injected item deliberately follows normal X post anatomy: avatar, author/handle,
+published date, text/media, engagement, then a compact `Open on X ↗` / `Keep for later` /
+`Done · Remove` footer. The only extension-specific context is one muted line:
+`From your bookmarks · #k of N · N left`. There is no accent rail, tinted card
+background, chip row or dashboard shell. Long posts clamp to six rendered lines;
+`Read more` expands in place and `Show less` collapses them. The whole non-action post
+body also opens the exact bookmarked X status for quotes, reposts and conversation context.
 
 ## Actions
 

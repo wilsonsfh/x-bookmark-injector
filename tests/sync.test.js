@@ -14,10 +14,21 @@ describe('collectBookmarkPages', () => {
     expect(fetchPage.mock.calls).toEqual([[null], ['C2']]);
   });
 
-  it('stops a repeated-cursor loop', async () => {
-    const fetchPage = vi.fn().mockResolvedValue({ tweets: [{ rest_id: 'a' }], nextCursor: 'SAME' });
+  it('stops a repeated-cursor loop that still returns new tweets', async () => {
+    const fetchPage = vi.fn()
+      .mockResolvedValueOnce({ tweets: [{ rest_id: 'a' }], nextCursor: 'SAME' })
+      .mockResolvedValueOnce({ tweets: [{ rest_id: 'b' }], nextCursor: 'SAME' });
 
     await expect(collectBookmarkPages(fetchPage)).rejects.toThrow('cursor repeated');
+  });
+
+  it('treats a repeated cursor with no new tweet IDs as a terminal page', async () => {
+    const fetchPage = vi.fn()
+      .mockResolvedValueOnce({ tweets: [{ rest_id: 'a' }], nextCursor: 'SAME' })
+      .mockResolvedValueOnce({ tweets: [{ rest_id: 'a' }], nextCursor: 'SAME' });
+
+    await expect(collectBookmarkPages(fetchPage)).resolves.toEqual([{ rest_id: 'a' }]);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
   });
 
   it('enforces a hard page cap', async () => {

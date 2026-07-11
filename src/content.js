@@ -272,9 +272,10 @@ async function pinRandomCard() {
 
     let card;
     const dismiss = () => {
-      if (currentCard !== card || homeVisit !== visit) return;
+      if (currentCard !== card || homeVisit !== visit) return false;
       card.remove();
       currentCard = null;
+      return true;
     };
     const runAction = async (action) => {
       const result = await chrome.runtime.sendMessage({
@@ -290,9 +291,11 @@ async function pinRandomCard() {
           ? result
           : { ok: false };
       }
-      dismiss();
+      const dismissed = dismiss();
       if (action === 'done') {
         showUndoToast(bookmark.id, result.undoUntil, result.reconciliationPending === true);
+      } else if (dismissed) {
+        focusFeed();
       }
       return result;
     };

@@ -17,7 +17,6 @@ export const DEFAULT_STATE = Object.freeze({
     deleteConfirmed: false,
     keepCooldownHours: 72,
     syncEveryHours: 24,
-    cardStyle: 'hybrid',
   },
 });
 
@@ -28,7 +27,12 @@ export function applyDefaults(raw = {}) {
     pendingActions: { ...DEFAULT_STATE.pendingActions, ...(raw.pendingActions ?? {}) },
     meta: { ...DEFAULT_STATE.meta, ...(raw.meta ?? {}) },
     auth: { queryIds: { ...(raw.auth?.queryIds ?? {}) } },
-    settings: { ...DEFAULT_STATE.settings, ...(raw.settings ?? {}) },
+    settings: {
+      confirmRealDelete: raw.settings?.confirmRealDelete ?? DEFAULT_STATE.settings.confirmRealDelete,
+      deleteConfirmed: raw.settings?.deleteConfirmed ?? DEFAULT_STATE.settings.deleteConfirmed,
+      keepCooldownHours: raw.settings?.keepCooldownHours ?? DEFAULT_STATE.settings.keepCooldownHours,
+      syncEveryHours: raw.settings?.syncEveryHours ?? DEFAULT_STATE.settings.syncEveryHours,
+    },
   };
 }
 
@@ -48,7 +52,12 @@ export function recoverStaleSync(state, now = Date.now()) {
 }
 
 export async function loadState() {
-  return recoverStaleSync(applyDefaults(await chrome.storage.local.get(null)));
+  const raw = await chrome.storage.local.get(null);
+  const state = recoverStaleSync(applyDefaults(raw));
+  if (raw.settings && Object.hasOwn(raw.settings, 'cardStyle')) {
+    await chrome.storage.local.set({ settings: state.settings });
+  }
+  return state;
 }
 
 export async function savePatch(patch) {

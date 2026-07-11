@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Read-more Strategies — 2026-07-12</title>
+<style>
+/* ── tokens (X dark palette + xbi vars) ── */
+:root{
+  --bg:#000;--surface:#16181c;--line:#2f3336;
+  --text:#e7e9ea;--muted:#71767b;--blue:#1d9bf0;
+  --ok:#00ba7c;--no:#f91880;--maybe:#ffd400;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:var(--text);font:15px/1.4 var(--font);padding:28px 16px 72px}
+h1{font-size:20px;font-weight:800;margin-bottom:4px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:24px;max-width:940px}
+
+/* ── comparison grid ── */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:1080px;margin:0 auto}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+
+/* ── column headers ── */
+.col-head{margin-bottom:10px}
+.col-head h2{font-size:13px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;
+  color:var(--muted);display:flex;align-items:center;gap:7px;margin-bottom:3px}
+.tag{font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;letter-spacing:.04em}
+.tag-a{background:#1e2a3a;color:#5cb8f5}
+.tag-b{background:#1e2d14;color:#7ed44a}
+.tag-c{background:#2a1e14;color:#c89a5c}
+.rec{font-size:11px;color:#7ed44a;font-weight:700;margin-left:4px}
+.col-head p{font-size:12px;color:var(--muted);margin-top:2px}
+
+/* ── feed shell ── */
+.feed{background:var(--bg);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+
+/* ── generic post row ── */
+.post{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px}
+.post:last-child{border-bottom:0}
+.post.ghost{opacity:.35}
+.av{width:40px;height:40px;border-radius:50%;flex:0 0 40px;background:#2a2d32}
+.av-z{background:linear-gradient(135deg,#7a5cff,#1d9bf0)}
+.body{flex:1;min-width:0}
+.row1{display:flex;gap:5px;align-items:baseline;flex-wrap:wrap;margin-bottom:1px}
+.name{font-weight:700;font-size:15px}
+.badge{color:var(--blue);font-size:13px}
+.handle,.dot,.time{color:var(--muted);font-size:14px}
+.prov{font-size:12.5px;color:var(--muted);margin-bottom:5px}
+.eng{display:flex;gap:16px;color:var(--muted);font-size:13px;margin-top:6px}
+
+/* ── shared pill footer ── */
+.footer{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
+.btn{font:12.5px/1 var(--font);font-weight:600;padding:5px 11px;border-radius:999px;
+  cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text);white-space:nowrap}
+.btn-read{border-color:var(--blue);color:var(--blue)}
+.btn-done{background:var(--blue);border-color:var(--blue);color:#fff}
+
+/* ── A: hard char cut ── */
+.txt-cut{font-size:15px;line-height:1.4;margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.read-more-a{color:var(--blue);font-size:15px;font-weight:400;cursor:pointer;
+  background:none;border:none;padding:0;display:inline}
+
+/* ── B: CSS line-clamp (collapsed) ── */
+.txt-clamp{font-size:15px;line-height:1.4;margin:4px 0 0;
+  display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden;
+  overflow-wrap:anywhere}
+.read-more-b{color:var(--blue);font-size:15px;font-weight:400;cursor:pointer;
+  background:none;border:none;padding:0;display:inline;margin-left:2px}
+
+/* ── B expanded state (shown below collapsed) ── */
+.expanded-label{font-size:11px;color:var(--muted);margin:12px 0 4px;
+  text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+.txt-full{font-size:15px;line-height:1.4;margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.show-less{color:var(--blue);font-size:15px;font-weight:400;cursor:pointer;
+  background:none;border:none;padding:0;display:inline;margin-left:2px}
+
+/* ── C: no expansion ── */
+.txt-full-c{font-size:15px;line-height:1.4;margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* ── rationale table ── */
+.note{max-width:1080px;margin:20px auto 0;background:#0d1117;
+  border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.note h3{font-size:13px;font-weight:700;margin-bottom:8px;color:#cfd9e0}
+.note table{width:100%;border-collapse:collapse;font-size:12.5px}
+.note td,.note th{padding:5px 8px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.note th{color:var(--muted);font-weight:600}
+.ok{color:var(--ok)}.no{color:var(--no)}.maybe{color:var(--maybe)}
+.verdict{margin-top:10px;font-size:12px;color:var(--muted);line-height:1.5}
+</style>
+</head>
+<body>
+
+<h1>Read-more Strategies — 2026-07-12</h1>
+<p class="sub">Same long bookmarked post in three truncation options. No rail/tint/chips/dashboard chrome.
+X-native colors + type throughout. Bookmark: Zara Zhang · <em>"I hoard X bookmarks…"</em> (full text ~290 chars) · #12 of 87 · 74 left · Jun 21 2026.</p>
+
+<div class="grid">
+
+  <!-- ══ A: HARD CHARACTER CUT ══ -->
+  <div>
+    <div class="col-head">
+      <h2><span class="tag tag-a">A</span> Hard char cut (~300 chars)</h2>
+      <p>Text sliced mid-sentence at ~300 chars + "Read more" link.</p>
+    </div>
+    <div class="feed">
+      <!-- ghost post above -->
+      <div class="post ghost">
+        <div class="av"></div>
+        <div class="body">
+          <div class="row1"><span class="name">Miguel Ángel</span><span class="badge">✓</span><span class="handle">@Miguel07Code</span><span class="dot">·</span><span class="time">5h</span></div>
+          <p style="font-size:15px;line-height:1.4;margin-top:2px">Claude Mythos solved motion graphics with HTML!</p>
+          <div class="eng"><span>💬 31</span><span>🔁 80</span><span>❤ 1.1K</span></div>
+        </div>
+      </div>
+      <!-- A: injected card -->
+      <div class="post">
+        <div class="av av-z"></div>
+        <div class="body">
+          <div class="prov">📌 From your bookmarks · #12 of 87 · 74 left</div>
+          <div class="row1"><span class="name">Zara Zhang</span><span class="badge">✓</span><span class="handle">@zarazhangrui</span><span class="dot">·</span><span class="time">Jun 21, 2026</span></div>
+          <p class="txt-cut">I hoard X bookmarks and never read them. So I built an extension that injects a bookmarked post into my main feed every time I open X (almost like an ad). Now I read my bookmar…<button class="read-more-a">Read more</button></p>
+          <div class="eng"><span>💬 127</span><span>🔁 84</span><span>❤ 1.2K</span><span>🔖 816</span></div>
+          <div class="footer">
+            <button class="btn btn-read">Open on X ↗</button>
+            <button class="btn">Keep</button>
+            <button class="btn btn-done">Done · Remove</button>
+          </div>
+        </div>
+      </div>
+      <!-- ghost post below -->
+      <div class="post ghost">
+        <div class="av"></div>
+        <div class="body">
+          <div class="row1"><span class="name">dominik kundel</span><span class="handle">@dkundel</span><span class="dot">·</span><span class="time">5d</span></div>
+          <p style="font-size:15px;line-height:1.4;margin-top:2px">A guide to /goal</p>
+          <div class="eng"><span>💬 12</span><span>🔁 9</span><span>❤ 210</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ B: CSS 6-LINE CLAMP (RECOMMENDED) ══ -->
+  <div>
+    <div class="col-head">
+      <h2><span class="tag tag-b">B</span> 6-line CSS clamp<span class="rec">★ Recommended</span></h2>
+      <p>Native -webkit-line-clamp:6 · inline "Read more" · expanded state shown below.</p>
+    </div>
+    <div class="feed">
+      <!-- ghost post above -->
+      <div class="post ghost">
+        <div class="av"></div>
+        <div class="body">
+          <div class="row1"><span class="name">Miguel Ángel</span><span class="badge">✓</span><span class="handle">@Miguel07Code</span><span class="dot">·</span><span class="time">5h</span></div>
+          <p style="font-size:15px;line-height:1.4;margin-top:2px">Claude Mythos solved motion graphics with HTML!</p>
+          <div class="eng"><span>💬 31</span><span>🔁 80</span><span>❤ 1.1K</span></div>
+        </div>
+      </div>
+      <!-- B collapsed -->
+      <div class="post">
+        <div class="av av-z"></div>
+        <div class="body">
+          <div class="prov">📌 From your bookmarks · #12 of 87 · 74 left</div>
+          <div class="row1"><span class="name">Zara Zhang</span><span class="badge">✓</span><span class="handle">@zarazhangrui</span><span class="dot">·</span><span class="time">Jun 21, 2026</span></div>
+          <p class="txt-clamp">I hoard X bookmarks and never read them. So I built an extension that injects a bookmarked post into my main feed every time I open X (almost like an ad). Now I read my bookmarks. The queue is down from 847 to 74. This is the tool.</p><button class="read-more-b">Read more</button>
+          <div class="eng"><span>💬 127</span><span>🔁 84</span><span>❤ 1.2K</span><span>🔖 816</span></div>
+          <div class="footer">
+            <button class="btn btn-read">Open on X ↗</button>
+            <button class="btn">Keep</button>
+            <button class="btn btn-done">Done · Remove</button>
+          </div>
+        </div>
+      </div>
+      <!-- B expanded (paired state) -->
+      <div class="post" style="background:color-mix(in srgb,var(--blue) 3%,#000)">
+        <div class="av av-z"></div>
+        <div class="body">
+          <div class="prov">📌 From your bookmarks · #12 of 87 · 74 left</div>
+          <p class="expanded-label">↑ expanded state</p>
+          <div class="row1"><span class="name">Zara Zhang</span><span class="badge">✓</span><span class="handle">@zarazhangrui</span><span class="dot">·</span><span class="time">Jun 21, 2026</span></div>
+          <p class="txt-full">I hoard X bookmarks and never read them. So I built an extension that injects a bookmarked post into my main feed every time I open X (almost like an ad). Now I read my bookmarks. The queue is down from 847 to 74. This is the tool.<button class="show-less">Show less</button></p>
+          <div class="eng"><span>💬 127</span><span>🔁 84</span><span>❤ 1.2K</span><span>🔖 816</span></div>
+          <div class="footer">
+            <button class="btn btn-read">Open on X ↗</button>
+            <button class="btn">Keep</button>
+            <button class="btn btn-done">Done · Remove</button>
+          </div>
+        </div>
+      </div>
+      <!-- ghost post below -->
+      <div class="post ghost">
+        <div class="av"></div>
+        <div class="body">
+          <div class="row1"><span class="name">dominik kundel</span><span class="handle">@dkundel</span><span class="dot">·</span><span class="time">5d</span></div>
+          <p style="font-size:15px;line-height:1.4;margin-top:2px">A guide to /goal</p>
+          <div class="eng"><span>💬 12</span><span>🔁 9</span><span>❤ 210</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ C: NO EXPANSION — OPEN ON X ONLY ══ -->
+  <div>
+    <div class="col-head">
+      <h2><span class="tag tag-c">C</span> No expansion</h2>
+      <p>Full text shown; "Open on X ↗" is the only read path. Keep + Done · Remove retained.</p>
+    </div>
+    <div class="feed">
+      <!-- ghost post above -->
+      <div class="post ghost">
+        <div class="av"></div>
+        <div class="body">
+          <div class="row1"><span class="name">Miguel Ángel</span><span class="badge">✓</span><span class="handle">@Miguel07Code</span><span class="dot">·</span><span class="time">5h</span></div>
+          <p style="font-size:15px;line-height:1.4;margin-top:2px">Claude Mythos solved motion graphics with HTML!</p>
+          <div class="eng"><span>💬 31</span><span>🔁 80</span><span>❤ 1.1K</span></div>
+        </div>
+      </div>
+      <!-- C injected -->
+      <div class="post">
+        <div class="av av-z"></div>
+        <div class="body">
+          <div class="prov">📌 From your bookmarks · #12 of 87 · 74 left</div>
+          <div class="row1"><span class="name">Zara Zhang</span><span class="badge">✓</span><span class="handle">@zarazhangrui</span><span class="dot">·</span><span class="time">Jun 21, 2026</span></div>
+          <p class="txt-full-c">I hoard X bookmarks and never read them. So I built an extension that injects a bookmarked post into my main feed every time I open X (almost like an ad). Now I read my bookmarks. The queue is down from 847 to 74. This is the tool.</p>
+          <div class="eng"><span>💬 127</span><span>🔁 84</span><span>❤ 1.2K</span><span>🔖 816</span></div>
+          <div class="footer">
+            <button class="btn btn-read">Open on X ↗</button>
+            <button class="btn">Keep</button>
+            <button class="btn btn-done">Done · Remove</button>
+          </div>
+        </div>
+      </div>
+      <!-- ghost post below -->
+      <div class="post ghost">
+        <div class="av"></div>
+        <div class="body">
+          <div class="row1"><span class="name">dominik kundel</span><span class="handle">@dkundel</span><span class="dot">·</span><span class="time">5d</span></div>
+          <p style="font-size:15px;line-height:1.4;margin-top:2px">A guide to /goal</p>
+          <div class="eng"><span>💬 12</span><span>🔁 9</span><span>❤ 210</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── rationale ── -->
+<div class="note">
+  <h3>Why B wins</h3>
+  <table>
+    <tr><th>Criterion</th><th>A — Hard char cut</th><th>B — CSS clamp ★</th><th>C — No expansion</th></tr>
+    <tr>
+      <td>Cut point is natural</td>
+      <td class="no">No — char count bisects words, breaks meaning mid-sentence</td>
+      <td class="ok">Yes — clamp ends on a rendered line boundary, never mid-word</td>
+      <td class="ok">N/A — full text always shown</td>
+    </tr>
+    <tr>
+      <td>Feed scroll length</td>
+      <td class="ok">Short — ~3 lines visible</td>
+      <td class="ok">Controlled — max 6 lines collapsed</td>
+      <td class="no">Variable — long posts push footer far off-screen</td>
+    </tr>
+    <tr>
+      <td>Implementation complexity</td>
+      <td class="maybe">JS substring + char count needed</td>
+      <td class="ok">CSS clamp + measured overflow; tiny accessible toggle, no text slicing</td>
+      <td class="ok">None — render as-is</td>
+    </tr>
+    <tr>
+      <td>Inline "Read more" placement</td>
+      <td class="no">Appended after ellipsis — visually awkward inline splice</td>
+      <td class="ok">Follows the clamp fade naturally; feels like X's own "Show more"</td>
+      <td class="no">N/A — no affordance to signal there's more on X</td>
+    </tr>
+    <tr>
+      <td>Open on X ↗ retained</td>
+      <td class="ok">Yes</td>
+      <td class="ok">Yes — footer always visible</td>
+      <td class="ok">Yes — sole read-more path</td>
+    </tr>
+    <tr>
+      <td>Keep / Done · Remove retained</td>
+      <td class="ok">Yes</td>
+      <td class="ok">Yes</td>
+      <td class="ok">Yes</td>
+    </tr>
+    <tr>
+      <td>Works with short posts (&lt;6 lines)</td>
+      <td class="ok">Yes (no cut triggered)</td>
+      <td class="ok">Yes — clamp is a no-op; "Read more" never renders</td>
+      <td class="ok">Yes</td>
+    </tr>
+    <tr>
+      <td>Matches X's own "Show more" UX</td>
+      <td class="no">No — char cut is not how X works</td>
+      <td class="ok">Yes — line-based clamp is identical to X's native behaviour</td>
+      <td class="no">No — X collapses long posts; always-expanded breaks the pattern</td>
+    </tr>
+  </table>
+  <p class="verdict">
+    <span class="tag tag-b" style="font-size:10px">B</span> wins on every axis that matters for a feed-injected card.
+    CSS <code>-webkit-line-clamp:6</code> is zero-JS, handles any language/RTL, and produces a clean line-boundary cut
+    identical to X's own "Show more" — so the interaction feels native rather than bolted-on.
+    A's hard char cut requires JS, bisects words, and looks broken on non-ASCII text.
+    C avoids the problem but trades it for unbounded card height, which disrupts feed rhythm and
+    removes the incentive to open the post on X (the whole point of the tool is the Done/Keep loop,
+    not full in-feed reading).
+    The footer — <strong>Open on X ↗ · Keep · Done · Remove</strong> — is identical across all three;
+    only the text body treatment changes.
+  </p>
+</div>
+
+</body>
+</html>

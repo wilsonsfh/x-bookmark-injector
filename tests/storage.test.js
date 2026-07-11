@@ -31,7 +31,6 @@ describe('applyDefaults', () => {
         deleteConfirmed: false,
         keepCooldownHours: 72,
         syncEveryHours: 24,
-        cardStyle: 'hybrid',
       },
     });
   });
@@ -59,7 +58,7 @@ describe('applyDefaults', () => {
     const state = applyDefaults({
       bookmarks: { one: { id: 'one' } },
       cleared: { two: { action: 'keep' } },
-      settings: { keepCooldownHours: 24 },
+      settings: { keepCooldownHours: 24, cardStyle: 'hybrid' },
       meta: { total: 4 },
       auth: { queryIds: { Bookmarks: 'read123' } },
     });
@@ -67,6 +66,7 @@ describe('applyDefaults', () => {
     expect(state.bookmarks).toEqual({ one: { id: 'one' } });
     expect(state.cleared).toEqual({ two: { action: 'keep' } });
     expect(state.settings).toMatchObject({ keepCooldownHours: 24, syncEveryHours: 24 });
+    expect(state.settings).not.toHaveProperty('cardStyle');
     expect(state.meta).toMatchObject({ total: 4, syncStatus: 'idle' });
     expect(state.auth).toEqual({ queryIds: { Bookmarks: 'read123' } });
   });
@@ -97,6 +97,25 @@ describe('storage helpers', () => {
       settings: { keepCooldownHours: 72 },
     });
     expect(get).toHaveBeenCalledWith(null);
+  });
+
+  it('physically removes the legacy Hybrid cardStyle setting on load', async () => {
+    const get = vi.fn().mockResolvedValue({
+      settings: {
+        confirmRealDelete: true,
+        deleteConfirmed: false,
+        keepCooldownHours: 72,
+        syncEveryHours: 24,
+        cardStyle: 'hybrid',
+      },
+    });
+    const set = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('chrome', { storage: { local: { get, set } } });
+
+    const state = await loadState();
+
+    expect(state.settings).not.toHaveProperty('cardStyle');
+    expect(set).toHaveBeenCalledWith({ settings: state.settings });
   });
 
   it('saves the supplied patch to local storage', async () => {

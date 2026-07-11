@@ -1,6 +1,6 @@
 # X Bookmark Injector — Design Spec
 
-- **Status:** draft (awaiting owner review)
+- **Status:** approved; visual direction corrected 2026-07-12
 - **Date:** 2026-07-10
 - **Owner:** Wilson Soon
 - **Author:** OpenCode (brainstorming session)
@@ -166,8 +166,7 @@ not-`done`, not-in-`keep`-cooldown → pick **random** → build card → pin as
   "settings": {
     "confirmRealDelete": true,   // one-time confirm before first real delete
     "keepCooldownHours": 72,     // how long "Keep" hides an item
-    "syncEveryHours": 24,
-    "cardStyle": "hybrid"        // locked v1 default
+    "syncEveryHours": 24
   }
 }
 ```
@@ -192,7 +191,7 @@ card and in the popup. (Kept items still count as "left".)
 not-`done` ∧ not-in-active-`keep`-cooldown. If all are cooled down, ignore cooldown.
 If none left, show a celebratory empty state ("Backlog cleared 🎉").
 
-**Buttons.** `Done ✓ (remove from X)` → real delete + Undo toast. `Keep for later` →
+**Buttons.** `Done · Remove` → real delete + Undo toast. `Keep for later` →
 local dismiss + cooldown.
 
 **Popup dashboard.** Count left, last sync, "Sync now", one-time delete-confirm
@@ -200,17 +199,20 @@ toggle, and a scrollable list (author, snippet, save rank, Done/Keep per row).
 
 ## 11. UX / card design
 
-**Locked v1 default (changeable):** **Hybrid** style — a native-looking post so it
-belongs in the feed, but carrying B's stat chips and always-visible Done/Keep buttons
-— **pinned at the very top of the For You feed** (above the first real post) on each
-load. Reference mockup: `docs/mockups/2026-07-10-injected-card-directions.html`.
+**Locked v1 default:** **Zara-faithful native post** — no accent rail, tinted card
+background, stat chips, dashboard shell or full-width actions. It is **pinned at the
+very top of For You** (above the first real post) on each load. Comparison and chosen
+direction: `docs/mockups/2026-07-12-simple-native-card-comparison.html` option B.
 
-Card anatomy: `📌 From your bookmarks` provenance label · `Saved #12 of 87 · 12th
-oldest` rank chip · `74 left` chip · avatar/name/handle · text + media · original
-engagement row · `posted <date>` · `Keep for later` + `Done ✓ (remove from X)`.
+Card anatomy: quiet `📌 From your bookmarks · #12 of 87 · 74 left` provenance line ·
+native avatar/name/handle/posted-date row · text + first media · original engagement
+row · compact pill footer (`Open on X ↗` · `Keep for later` · `Done · Remove`). Rank
+remains chronological and visible, but never becomes a separate dashboard chip. Long
+posts clamp to six rendered lines with in-place `Read more` / `Show less`; the whole
+non-action post body opens the exact bookmarked status for quote/repost/thread context.
 
-Must visually track X's current dark/light theme and not shift layout when dismissed
-(smooth collapse).
+It inherits X's current light/dark text and background, restores feed focus after Keep,
+focuses bounded Undo after Done, and uses only restrained color/press feedback.
 
 ## 12. Edge cases & failure modes
 
@@ -234,8 +236,9 @@ Must visually track X's current dark/light theme and not shift layout when dismi
   telemetry, no third-party egress. Network calls go only to `x.com`.
 - **Least privilege.** `host_permissions` limited to `https://x.com/*` (+ legacy
   `https://twitter.com/*`), plus `storage`. No broad `<all_urls>`.
-- **Secrets.** Auth (Bearer/`ct0`) is the user's own session, captured in-page, held in
-  memory / local storage, never transmitted anywhere but X. Not committed to git.
+- **Secrets.** Auth (Bearer/`ct0`) is the user's own session, captured in-page and held
+  in memory only; local storage persists allowlisted query IDs, never credentials or
+  request templates. Nothing is transmitted anywhere but X or committed to git.
 - **ToS (honest).** Using X's internal/undocumented endpoints is **against X's Terms of
   Service**. Risk is low for personal, local, human-rate use, but real (theoretical
   account action). Documented in the README. No automation beyond user-initiated syncs.
@@ -262,8 +265,8 @@ Must visually track X's current dark/light theme and not shift layout when dismi
    _Verify: operation names/IDs captured on initialization; persisted storage contains IDs only._
 3. **M3 — Read + cache:** background syncs bookmarks (paginate), assigns `saveRank`,
    stores. Popup shows count + list. _Verify: counts match real bookmarks._
-4. **M4 — Real card:** render a random cached bookmark (rank, timestamp, count) in the
-   Hybrid card. _Verify: matches mockup + real data._
+4. **M4 — Real card:** render a random cached bookmark (rank, timestamp, count) as the
+   simple native injected post. _Verify: matches the 2026-07-12 option-B mockup + real data._
 5. **M5 — Actions:** Keep (local + cooldown); Done (`DeleteBookmark` + confirm + Undo).
    _Verify: X bookmarks actually change; Undo restores._
 6. **M6 — Hardening:** edge cases, backoff, selector module, empty/logged-out states,
@@ -276,8 +279,8 @@ Must visually track X's current dark/light theme and not shift layout when dismi
 - **Undo window** length for Done (default ~6s) — tune in use.
 - **"Keep" cooldown** default (72h) — tune in use.
 - **Sync cadence** vs rate limits — start daily + manual; revisit.
-- **Card style** — Hybrid is the locked default; trivially swappable to A/B via
-  `settings.cardStyle` if it feels wrong in real use.
+- **Card style** — native option B is locked after owner correction; do not reintroduce
+  the rejected Hybrid rail/tint/chips without new explicit feedback.
 
 ## 17. Wiki cross-links
 
