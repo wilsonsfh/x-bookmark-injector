@@ -161,6 +161,8 @@ async function loadContent(options = {}) {
   let observerOptions;
   let intervalCallback;
   let frameCallback;
+  let runtimeMessageCallback;
+  let windowMessageCallback;
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   const requestAnimationFrame = vi.fn((callback) => {
     frameCallback ??= callback;
@@ -175,11 +177,25 @@ async function loadContent(options = {}) {
 
   vi.stubGlobal('document', fixture.document);
   vi.stubGlobal('location', location);
+  const runtime = {
+    sendMessage,
+    onMessage: {
+      addListener: vi.fn((listener) => { runtimeMessageCallback = listener; }),
+    },
+  };
   vi.stubGlobal('chrome', {
-    runtime: { sendMessage },
+    runtime,
     storage: { local: { get: storageGet } },
   });
-  vi.stubGlobal('window', { confirm, open: vi.fn() });
+  const pageWindow = {
+    confirm,
+    open: vi.fn(),
+    postMessage: vi.fn(),
+    addEventListener: vi.fn((type, listener) => {
+      if (type === 'message') windowMessageCallback = listener;
+    }),
+  };
+  vi.stubGlobal('window', pageWindow);
   vi.stubGlobal('requestAnimationFrame', requestAnimationFrame);
   vi.stubGlobal('MutationObserver', class {
     constructor(callback) {
@@ -203,6 +219,13 @@ async function loadContent(options = {}) {
     confirm,
     flush,
     interval: async () => { intervalCallback(); await flush(); },
+    invokeRuntime: (message) => {
+      const sendResponse = vi.fn();
+      return {
+        returned: runtimeMessageCallback(message, {}, sendResponse),
+        sendResponse,
+      };
+    },
     location,
     mutate: async () => { mutationCallback(); await runFrame(); },
     mutateBurst: async (count) => {
@@ -213,6 +236,8 @@ async function loadContent(options = {}) {
     },
     observerOptions,
     requestAnimationFrame,
+    pageWindow,
+    pageMessage: (data, source = pageWindow) => windowMessageCallback({ data, source }),
     sendMessage,
     storageGet,
   };
@@ -221,6 +246,7 @@ async function loadContent(options = {}) {
 describe('bookmark card injection', () => {
   beforeEach(() => vi.resetModules());
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -435,5 +461,107 @@ describe('bookmark card injection', () => {
 
     expect(newCard).not.toBe(oldCard);
     expect(fixture.document.getElementById('xbi-card')).toBe(newCard);
+  });
+
+  it('sanitizes page captures before retaining and forwarding session auth', async () => {
+    const fixture = await loadContent();
+    fixture.pageMessage({
+      source: 'xbi-page',
+      type: 'XBI_AUTH_CAPTURE',
+      capture: {
+        operation: 'Bookmarks',
+        queryId: 'read123',
+        bearer: 'Bearer session',
+        csrf: 'csrf-session',
+        operationHeaders: {
+          'x-client-transaction-id': 'tx',
+          cookie: 'drop-me',
+        },
+        operationTemplate: {
+          method: 'GET',
+          params: { variables: '{}', secret: 'drop-me' },
+          body: null,
+        },
+      },
+    });
+
+    expect(fixture.sendMessage).toHaveBeenCalledWith({
+      type: 'XBI_AUTH_CAPTURE',
+      capture: {
+        operation: 'Bookmarks',
+        queryId: 'read123',
+        bearer: 'Bearer session',
+        csrf: 'csrf-session',
+        operationHeaders: { 'x-client-transaction-id': 'tx' },
+        operationTemplate: {
+          method: 'GET',
+          params: { variables: '{}' },
+          body: null,
+        },
+      },
+    });
+
+    const auth = fixture.invokeRuntime({ type: 'XBI_GET_PAGE_AUTH' });
+    expect(auth.returned).toBe(false);
+    expect(auth.sendResponse).toHaveBeenCalledWith(expect.objectContaining({
+      bearer: 'Bearer session',
+      csrf: 'csrf-session',
+      queryIds: { Bookmarks: 'read123' },
+    }));
+  });
+
+  it('correlates page responses and keeps the Chrome 114 async channel open', async () => {
+    const fixture = await loadContent();
+    const runtime = fixture.invokeRuntime({
+      type: 'XBI_PAGE_REQUEST',
+      request: { url: 'https://x.com/i/api/graphql/read123/Bookmarks' },
+    });
+    const executeMessage = fixture.pageWindow.postMessage.mock.calls.at(-1)[0];
+
+    expect(runtime.returned).toBe(true);
+    expect(executeMessage).toMatchObject({
+      source: 'xbi-extension',
+      type: 'XBI_EXECUTE',
+      requestId: expect.any(String),
+    });
+
+    fixture.pageMessage({
+      source: 'xbi-page',
+      type: 'XBI_EXECUTE_RESULT',
+      requestId: 'wrong-request',
+      ok: true,
+      status: 200,
+    });
+    expect(runtime.sendResponse).not.toHaveBeenCalled();
+
+    const result = {
+      source: 'xbi-page',
+      type: 'XBI_EXECUTE_RESULT',
+      requestId: executeMessage.requestId,
+      ok: true,
+      status: 200,
+      payload: { data: {} },
+    };
+    fixture.pageMessage(result);
+    await fixture.flush();
+    expect(runtime.sendResponse).toHaveBeenCalledWith(result);
+  });
+
+  it('bounds an unanswered page request with a 20-second timeout', async () => {
+    const fixture = await loadContent();
+    vi.useFakeTimers();
+    const runtime = fixture.invokeRuntime({
+      type: 'XBI_PAGE_REQUEST',
+      request: { url: 'https://x.com/i/api/graphql/read123/Bookmarks' },
+    });
+
+    expect(runtime.returned).toBe(true);
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(runtime.sendResponse).toHaveBeenCalledWith({
+      ok: false,
+      status: 0,
+      error: 'Page request timed out',
+    });
   });
 });
