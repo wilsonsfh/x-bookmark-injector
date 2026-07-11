@@ -1,0 +1,31 @@
+{
+  "data": {
+    "bookmark_timeline_v2": {
+      "timeline": {
+        "instructions": [{
+          "type": "TimelineAddEntries",
+          "entries": [
+            {
+              "entryId": "tweet-1806",
+              "content": {
+                "itemContent": {
+                  "tweet_results": {
+                    "result": {
+                      "rest_id": "1806",
+                      "legacy": { "full_text": "I hoard X bookmarks", "created_at": "Sat Jun 21 13:37:00 +0000 2026" },
+                      "core": { "user_results": { "result": { "legacy": { "name": "Zara Zhang", "screen_name": "zarazhangrui", "profile_image_url_https": "https://pbs.twimg.com/av.jpg" } } } }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "entryId": "cursor-bottom-0",
+              "content": { "cursorType": "Bottom", "value": "NEXT_CURSOR" }
+            }
+          ]
+        }]
+      }
+    }
+  }
+}
