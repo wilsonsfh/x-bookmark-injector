@@ -99,13 +99,18 @@ function parseModuleItem(item) {
     throw integrationError();
   }
   const itemContent = item.item.itemContent;
-  if (Object.hasOwn(itemContent, 'tweet_results')) return tweetFromItemContent(itemContent);
+  if (Object.hasOwn(itemContent, 'tweet_results')) {
+    return { tweet: tweetFromItemContent(itemContent), cursor: null };
+  }
   if (Object.hasOwn(itemContent, 'cursorType')) {
     if (!BOOKMARK_CURSOR_TYPES.has(itemContent.cursorType)
       || typeof itemContent.value !== 'string' || !itemContent.value) {
       throw integrationError();
     }
-    return null;
+    return {
+      tweet: null,
+      cursor: itemContent.cursorType === 'Bottom' ? itemContent.value : null,
+    };
   }
   throw integrationError();
 }
@@ -126,11 +131,16 @@ function parseEntry(entry) {
   if (entryId.startsWith('module-') || Object.hasOwn(content, 'items')) {
     if (!Array.isArray(content.items)) throw integrationError();
     const tweets = [];
+    let cursor = null;
     for (const item of content.items) {
-      const tweet = parseModuleItem(item);
-      if (tweet) tweets.push(tweet);
+      const parsed = parseModuleItem(item);
+      if (parsed.tweet) tweets.push(parsed.tweet);
+      if (parsed.cursor !== null) {
+        if (cursor !== null) throw integrationError();
+        cursor = parsed.cursor;
+      }
     }
-    return { tweets, cursor: null };
+    return { tweets, cursor };
   }
   if (entryId.startsWith('tweet-') || Object.hasOwn(content, 'itemContent')) {
     return { tweets: [tweetFromItemContent(content.itemContent)], cursor: null };
@@ -160,7 +170,10 @@ export function parseBookmarks(payload) {
     for (const entry of instruction.entries) {
       const parsed = parseEntry(entry);
       tweets.push(...parsed.tweets);
-      if (parsed.cursor !== null) nextCursor = parsed.cursor;
+      if (parsed.cursor !== null) {
+        if (nextCursor !== null) throw integrationError();
+        nextCursor = parsed.cursor;
+      }
     }
   }
   return { tweets, nextCursor };

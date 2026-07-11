@@ -155,6 +155,62 @@ describe('parseBookmarks', () => {
     });
   });
 
+  it('propagates a validated module Bottom cursor', () => {
+    const payload = {
+      data: {
+        bookmark_timeline_v2: {
+          timeline: {
+            instructions: [{
+              type: 'TimelineAddEntries',
+              entries: [{
+                entryId: 'module-cursor-0',
+                content: {
+                  items: [{
+                    entryId: 'cursor-bottom-0',
+                    item: { itemContent: { cursorType: 'Bottom', value: 'MODULE_NEXT' } },
+                  }],
+                },
+              }],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(parseBookmarks(payload)).toEqual({ tweets: [], nextCursor: 'MODULE_NEXT' });
+  });
+
+  it.each([
+    ['FIRST', 'SECOND'],
+    ['SAME', 'SAME'],
+  ])('rejects multiple Bottom cursors %s / %s', (first, second) => {
+    const payload = {
+      data: {
+        bookmark_timeline_v2: {
+          timeline: {
+            instructions: [{
+              type: 'TimelineAddEntries',
+              entries: [
+                { entryId: 'cursor-bottom-0', content: { cursorType: 'Bottom', value: first } },
+                {
+                  entryId: 'module-cursor-0',
+                  content: {
+                    items: [{
+                      entryId: 'cursor-bottom-1',
+                      item: { itemContent: { cursorType: 'Bottom', value: second } },
+                    }],
+                  },
+                },
+              ],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(() => parseBookmarks(payload)).toThrowError(new Error('X bookmarks integration response invalid'));
+  });
+
   it('throws a sanitized integration error for GraphQL error-only payloads', () => {
     const payload = { errors: [{ message: 'secret upstream detail' }] };
 

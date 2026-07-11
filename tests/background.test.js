@@ -287,6 +287,28 @@ describe('service-worker bookmark sync', () => {
     expect(background.sendMessage.mock.calls.filter(([, message]) => message.type === 'XBI_PAGE_REQUEST')).toHaveLength(2);
   });
 
+  it('continues pagination from a module-contained Bottom cursor', async () => {
+    const firstPage = bookmarkPayload(['new']);
+    firstPage.data.bookmark_timeline_v2.timeline.instructions[0].entries.push({
+      entryId: 'module-cursor-0',
+      content: {
+        items: [{
+          entryId: 'cursor-bottom-0',
+          item: { itemContent: { cursorType: 'Bottom', value: 'MODULE_C2' } },
+        }],
+      },
+    });
+    const pages = [firstPage, bookmarkPayload(['old'])];
+    const pageRequest = vi.fn(async () => ({ ok: true, status: 200, payload: pages.shift() }));
+    const background = await loadOperationalBackground({ pageRequest });
+
+    await expect(background.invoke({ type: 'XBI_SYNC' })).resolves.toEqual({ ok: true, total: 2 });
+
+    expect(pageRequest).toHaveBeenCalledTimes(2);
+    const secondVariables = JSON.parse(new URL(pageRequest.mock.calls[1][0].url).searchParams.get('variables'));
+    expect(secondVariables.cursor).toBe('MODULE_C2');
+  });
+
   it('deduplicates cross-page tweet IDs before assigning contiguous ranks and totals', async () => {
     const newestPage = bookmarkPayload(['newest', 'duplicate'], 'C2');
     newestPage.data.bookmark_timeline_v2.timeline.instructions[0]
@@ -333,6 +355,23 @@ describe('service-worker bookmark sync', () => {
           },
         },
       },
+    }, 'integration response invalid'],
+    [{
+      ok: true,
+      status: 200,
+      payload: (() => {
+        const payload = bookmarkPayload(['conflict'], 'FIRST');
+        payload.data.bookmark_timeline_v2.timeline.instructions[0].entries.push({
+          entryId: 'module-cursor-0',
+          content: {
+            items: [{
+              entryId: 'cursor-bottom-1',
+              item: { itemContent: { cursorType: 'Bottom', value: 'SECOND' } },
+            }],
+          },
+        });
+        return payload;
+      })(),
     }, 'integration response invalid'],
     [{
       ok: true,
