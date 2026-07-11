@@ -2,7 +2,8 @@ export function pickBookmark(bookmarks, cleared, opts = {}) {
   const now = opts.now ? new Date(opts.now).getTime() : Date.now();
   const cooldownMs = (opts.cooldownHours ?? 72) * 3600e3;
   const rng = opts.rng ?? Math.random;
-  const notDone = Object.values(bookmarks).filter((b) => cleared[b.id]?.action !== 'done');
+  const notDone = Object.values(bookmarks).filter((b) => !['done', 'reconciliation']
+    .includes(cleared[b.id]?.action));
   const active = notDone.filter((b) => {
     const c = cleared[b.id];
     if (c?.action === 'keep') return now - new Date(c.at).getTime() >= cooldownMs;

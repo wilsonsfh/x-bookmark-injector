@@ -11,6 +11,15 @@ describe('pickBookmark', () => {
     expect(got.id).not.toBe('a');
   });
 
+  it('never returns an item whose delete outcome is reconciling', () => {
+    const cleared = {
+      a: { action: 'reconciliation' },
+      b: { action: 'done' },
+      c: { action: 'done' },
+    };
+    expect(pickBookmark(bm, cleared, { rng: first })).toBeNull();
+  });
+
   it('excludes keep within cooldown', () => {
     const now = '2026-07-10T12:00:00Z';
     const cleared = {

@@ -140,19 +140,23 @@ function focusFeed() {
   target.focus({ preventScroll: true });
 }
 
-function showUndoToast(tweetId, undoUntil) {
+function showUndoToast(tweetId, undoUntil, reconciliationPending = false) {
   const existing = document.getElementById('xbi-undo');
   if (existing?.dataset.tweetId === tweetId
-    && Number(existing.dataset.undoUntil) === undoUntil) return;
+    && Number(existing.dataset.undoUntil) === undoUntil
+    && existing.dataset.reconciliationPending === String(reconciliationPending)) return;
   existing?.remove();
   const toast = document.createElement('div');
   toast.id = 'xbi-undo';
   toast.dataset.tweetId = tweetId;
   toast.dataset.undoUntil = String(undoUntil);
+  toast.dataset.reconciliationPending = String(reconciliationPending);
   toast.role = 'status';
   toast.setAttribute('aria-live', 'polite');
   toast.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;background:#1d9bf0;color:white;padding:10px 14px;border-radius:999px;font:700 14px system-ui;box-shadow:0 8px 30px #0008';
-  toast.append('Bookmark removed from X · ');
+  toast.append(reconciliationPending
+    ? 'Delete outcome uncertain · Undo safely restores · '
+    : 'Bookmark removed from X · ');
   const undo = document.createElement('button');
   undo.type = 'button';
   undo.textContent = 'Undo';
@@ -198,7 +202,11 @@ async function recoverPendingUndo() {
     const recovered = Object.entries(
       state?.pendingUndo && typeof state.pendingUndo === 'object' ? state.pendingUndo : {},
     ).find(([, record]) => Number.isFinite(record?.undoUntil) && record.undoUntil > Date.now());
-    if (recovered) showUndoToast(recovered[0], recovered[1].undoUntil);
+    if (recovered) showUndoToast(
+      recovered[0],
+      recovered[1].undoUntil,
+      recovered[1].reconciliationPending === true,
+    );
   } catch {
     // The next Home visit can retry without disturbing the feed.
   }
@@ -283,7 +291,9 @@ async function pinRandomCard() {
           : { ok: false };
       }
       dismiss();
-      if (action === 'done') showUndoToast(bookmark.id, result.undoUntil);
+      if (action === 'done') {
+        showUndoToast(bookmark.id, result.undoUntil, result.reconciliationPending === true);
+      }
       return result;
     };
     card = buildCardElement(

@@ -566,11 +566,46 @@ describe('bookmark card injection', () => {
     expect(fixture.document.activeElement).toBe(undo);
   });
 
+  it('uses truthful uncertain-delete Undo copy and does not resurface while reconciling', async () => {
+    const undoUntil = Date.now() + 6_000;
+    const reconcilingState = {
+      ...TEST_STATE,
+      cleared: { '1806': { action: 'reconciliation', at: new Date().toISOString() } },
+    };
+    const storageGet = vi.fn()
+      .mockResolvedValueOnce(TEST_STATE)
+      .mockResolvedValue(reconcilingState);
+    const sendMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      recovery: true,
+      reconciliationPending: true,
+      undoUntil,
+      warning: 'Delete outcome uncertain; Undo safely restores the bookmark',
+    });
+    const fixture = await loadContent({ sendMessage, storageGet });
+    const doneButton = fixture.document.getElementById('xbi-card').findAll('button')[1];
+
+    await doneButton.eventListeners.get('click')();
+
+    const toast = fixture.document.getElementById('xbi-undo');
+    expect(toast.textContent).toContain('Delete outcome uncertain');
+    expect(toast.textContent).toContain('Undo safely restores');
+    expect(fixture.document.activeElement).toBe(toast.findAll('button')[0]);
+
+    fixture.location.pathname = '/profile';
+    await fixture.interval();
+    fixture.location.pathname = '/home';
+    await fixture.interval();
+    expect(fixture.document.getElementById('xbi-card')).toBeNull();
+  });
+
   it('renders, focuses, and invokes projected Undo after a service-worker restart', async () => {
     const undoUntil = Date.now() + 6_000;
     const sendMessage = vi.fn().mockResolvedValue({ ok: true });
     const getProjectedState = vi.fn().mockResolvedValue({
-      pendingUndo: { '1806': { undoUntil, recovery: true } },
+      pendingUndo: {
+        '1806': { undoUntil, recovery: true, reconciliationPending: true },
+      },
     });
     const fixture = await loadContent({ sendMessage, getProjectedState });
 
@@ -578,6 +613,7 @@ describe('bookmark card injection', () => {
     const undo = toast.findAll('button')[0];
     expect(undo).toBeDefined();
     expect(fixture.document.activeElement).toBe(undo);
+    expect(toast.textContent).toContain('Delete outcome uncertain');
 
     await undo.eventListeners.get('click')();
 

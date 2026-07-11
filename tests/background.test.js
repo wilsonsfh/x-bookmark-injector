@@ -108,6 +108,7 @@ async function loadOperationalBackground({
   initialState = OPERATIONAL_STATE,
   setImplementation = async () => {},
   sessionSetImplementation = async () => {},
+  sessionRemoveImplementation = async () => {},
   tabQuery = vi.fn().mockResolvedValue([]),
   stores = {
     local: structuredClone(initialState),
@@ -135,7 +136,10 @@ async function loadOperationalBackground({
       session: {
         get: vi.fn(async () => structuredClone(stores.session)),
         set: sessionSet,
-        remove: vi.fn(async (key) => { delete stores.session[key]; }),
+        remove: vi.fn(async (key) => {
+          await sessionRemoveImplementation(key);
+          delete stores.session[key];
+        }),
       },
     },
     tabs: { query: tabQuery, sendMessage },
@@ -535,21 +539,19 @@ describe('service-worker bookmark actions', () => {
     [{ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: { success: false } } } }, 'mutation response invalid'],
     [{ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'done' } } }, 'mutation response invalid'],
     [{ ok: true, status: 200, payload: { errors: [{ message: 'nope' }], data: { tweet_bookmark_delete: 'Done' } } }, 'mutation response invalid'],
-  ])('fails closed and reconciles only uncertain mutation outcomes: %j', async (response, error) => {
+  ])('returns bounded recovery for uncertain mutation outcomes: %j', async (response, _error) => {
     const background = await loadOperationalBackground({ pageRequest: vi.fn().mockResolvedValue(response) });
 
     const result = await background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
 
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(error) });
-    if (response?.status >= 400
-      && response.status < 500
-      && ![408, 409, 425, 429].includes(response.status)) {
-      expect(background.getState().cleared).toEqual({});
-      expect(background.getState().pendingActions).toEqual({});
-    } else {
-      expect(background.getState().cleared.old).toMatchObject({ action: 'done', reconciliation: true });
-      expect(background.getState().pendingActions.old).toMatchObject({ phase: 'reconciliation' });
-    }
+    expect(result).toMatchObject({
+      ok: true,
+      recovery: true,
+      reconciliationPending: true,
+      undoUntil: expect.any(Number),
+    });
+    expect(background.getState().cleared.old).toMatchObject({ action: 'reconciliation' });
+    expect(background.getState().pendingActions.old).toMatchObject({ phase: 'reconciliation' });
     expect(background.getState().settings.deleteConfirmed).toBe(false);
   });
 
@@ -598,6 +600,52 @@ describe('service-worker bookmark actions', () => {
     expect(background.getState().cleared.old).toBeUndefined();
     expect(pageRequest.mock.calls.map(([request]) => request.url.split('/').at(-1)))
       .toEqual(['DeleteBookmark', 'CreateBookmark']);
+  });
+
+  it('treats session cleanup as best-effort after Undo restores local state', async () => {
+    vi.useFakeTimers();
+    const stores = { local: structuredClone(OPERATIONAL_STATE), session: {} };
+    let sessionOutage = false;
+    const sessionSetImplementation = vi.fn(async () => {
+      if (sessionOutage) throw new Error('session storage unavailable');
+    });
+    const sessionRemoveImplementation = vi.fn(async () => {
+      if (sessionOutage) throw new Error('session storage unavailable');
+    });
+    const pageRequest = vi.fn(async (request) => ({
+      ok: true,
+      status: 200,
+      payload: request.url.endsWith('/DeleteBookmark')
+        ? { data: { tweet_bookmark_delete: 'Done' } }
+        : { data: { tweet_bookmark_put: 'Done' } },
+    }));
+    const firstWorker = await loadOperationalBackground({
+      pageRequest,
+      sessionSetImplementation,
+      sessionRemoveImplementation,
+      stores,
+    });
+    await firstWorker.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    sessionOutage = true;
+
+    await expect(firstWorker.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' }))
+      .resolves.toEqual({ ok: true });
+    expect(firstWorker.getState().cleared.old).toBeUndefined();
+    expect(firstWorker.getState().pendingActions).toEqual({});
+    expect(firstWorker.getState().bookmarks.old).toEqual(OPERATIONAL_STATE.bookmarks.old);
+    expect(firstWorker.getSession().pendingUndo.old).toBeDefined();
+
+    vi.resetModules();
+    const restartedWorker = await loadOperationalBackground({
+      pageRequest,
+      sessionSetImplementation,
+      sessionRemoveImplementation,
+      stores,
+    });
+    await expect(restartedWorker.invoke({ type: 'XBI_GET_STATE' })).resolves.toMatchObject({
+      pendingUndo: {},
+      pendingActions: {},
+    });
   });
 
   it('persists a delete intent and bookmark snapshot before calling X', async () => {
@@ -677,7 +725,13 @@ describe('service-worker bookmark actions', () => {
     const background = await loadOperationalBackground({ pageRequest });
 
     await expect(background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
-      .resolves.toMatchObject({ ok: false, error: 'X request failed' });
+      .resolves.toEqual({
+        ok: true,
+        recovery: true,
+        reconciliationPending: true,
+        undoUntil: expect.any(Number),
+        warning: 'Delete outcome uncertain; Undo safely restores the bookmark',
+      });
 
     expect(pageRequest).toHaveBeenCalledOnce();
     expect(background.getState().pendingActions.old).toMatchObject({
@@ -689,6 +743,8 @@ describe('service-worker bookmark actions', () => {
       undoUntil: expect.any(Number),
       bookmark: OPERATIONAL_STATE.bookmarks.old,
     });
+    expect(background.getState().cleared.old).toMatchObject({ action: 'reconciliation' });
+    expect(countLeft(background.getState().bookmarks, background.getState().cleared)).toBe(1);
   });
 
   it.each([0, 408, 409, 425, 429, 500, 503])(
@@ -699,7 +755,12 @@ describe('service-worker bookmark actions', () => {
       });
 
       await expect(background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
-        .resolves.toMatchObject({ ok: false, status });
+        .resolves.toMatchObject({
+          ok: true,
+          recovery: true,
+          reconciliationPending: true,
+          undoUntil: expect.any(Number),
+        });
       expect(background.getState().pendingActions.old).toMatchObject({
         phase: 'reconciliation',
         undoUntil: expect.any(Number),
