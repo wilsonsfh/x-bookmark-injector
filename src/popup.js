@@ -4,6 +4,7 @@ const $ = (id) => document.getElementById(id);
 let currentSettings = { confirmRealDelete: true, deleteConfirmed: false };
 let noticeVersion = 0;
 let activeUndo = null;
+let doneInFlight = false;
 let pendingRowActions = 0;
 let requestedRenderGeneration = 0;
 let renderInFlight = null;
@@ -43,6 +44,10 @@ function setDoneActionsDisabled(disabled) {
   for (const button of $('list').querySelectorAll('button')) {
     if (button.getAttribute('data-action') === 'done') button.disabled = disabled;
   }
+}
+
+function doneBlocked() {
+  return doneInFlight || Boolean(activeUndo);
 }
 
 function clearUndoNotice() {
@@ -137,7 +142,7 @@ function setActionsPending(actions, activeButton, pendingLabel, pendingAccessibl
 
 function restoreActions(actions, activeButton, label, accessibleLabel) {
   for (const actionButton of actions.querySelectorAll('button')) {
-    actionButton.disabled = actionButton.getAttribute('data-action') === 'done' && Boolean(activeUndo);
+    actionButton.disabled = actionButton.getAttribute('data-action') === 'done' && doneBlocked();
   }
   actions.setAttribute('aria-busy', 'false');
   activeButton.textContent = label;
@@ -153,14 +158,18 @@ function actionButton(label, action, bookmark, actions) {
   element.textContent = label;
   element.setAttribute('data-action', action);
   element.setAttribute('aria-label', accessibleLabel);
-  if (action === 'done' && activeUndo) element.disabled = true;
+  if (action === 'done' && doneBlocked()) element.disabled = true;
   element.addEventListener('click', async () => {
-    if (action === 'done' && activeUndo) return;
+    if (action === 'done' && doneBlocked()) return;
     if (action === 'done' && currentSettings.confirmRealDelete && currentSettings.deleteConfirmed !== true) {
       const approved = window.confirm('Remove this bookmark from X for real? You will have 6 seconds to Undo.');
       if (!approved) return;
     }
 
+    if (action === 'done') {
+      doneInFlight = true;
+      setDoneActionsDisabled(true);
+    }
     showError(null);
     pendingRowActions += 1;
     const pendingVerb = action === 'done' ? 'Removing' : 'Keeping';
@@ -181,6 +190,7 @@ function actionButton(label, action, bookmark, actions) {
         || (Number.isFinite(result.undoUntil) && result.undoUntil > Date.now()));
     if (!validSuccess) {
       pendingRowActions -= 1;
+      if (action === 'done') doneInFlight = false;
       restoreActions(actions, element, label, accessibleLabel);
       await render();
       showError(errorMessage(result, 'Action failed'));
@@ -190,7 +200,10 @@ function actionButton(label, action, bookmark, actions) {
     pendingRowActions -= 1;
     restoreActions(actions, element, label, accessibleLabel);
     await render();
-    if (action === 'done') showUndo(bookmark.id, result.undoUntil);
+    if (action === 'done') {
+      showUndo(bookmark.id, result.undoUntil);
+      doneInFlight = false;
+    }
   });
   return element;
 }

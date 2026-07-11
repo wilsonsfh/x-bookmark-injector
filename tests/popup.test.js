@@ -375,6 +375,9 @@ describe('popup dashboard', () => {
     expect(confirm).toHaveBeenCalledWith('Remove this bookmark from X for real? You will have 6 seconds to Undo.');
     expect(fixture.runtimeSend).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'XBI_ACTION' }));
     expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2);
+    expect(fixture.elements.list.querySelectorAll('button')
+      .filter((button) => button.textContent === 'Done')
+      .every((button) => !button.disabled)).toBe(true);
   });
 
   it('fails closed on malformed Done responses and thrown action requests', async () => {
@@ -433,6 +436,7 @@ describe('popup dashboard', () => {
     expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2);
     expect(fixture.elements.undoNotice.hidden).toBe(true);
     expect(fixture.document.activeElement).toBe(buttonNamed(fixture.elements.list, 'Done'));
+    expect(buttonNamed(fixture.elements.list, 'Done').disabled).toBe(false);
   });
 
   it('does not let a storage render erase an active Undo control', async () => {
@@ -497,6 +501,75 @@ describe('popup dashboard', () => {
     expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeUndefined();
   });
 
+  it('sets the global Done gate before the first mutation resolves and retains it on success', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const state = structuredClone(BASE_STATE);
+    const firstResult = deferred();
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(state);
+      if (message.action === 'done') return firstResult.promise;
+      return { ok: false };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    const [firstDone, secondDone] = fixture.elements.list.querySelectorAll('button')
+      .filter((button) => button.textContent === 'Done');
+
+    const firstClick = firstDone.dispatch('click');
+    await vi.waitFor(() => expect(sendMessage.mock.calls
+      .filter(([message]) => message.type === 'XBI_ACTION' && message.action === 'done')).toHaveLength(1));
+    fixture.storageChanged({}, 'local');
+    await vi.waitFor(() => expect(sendMessage.mock.calls
+      .filter(([message]) => message.type === 'XBI_GET_STATE')).toHaveLength(2));
+    const disabledBeforeResolve = secondDone.disabled;
+    const secondClick = secondDone.dispatch('click');
+
+    state.cleared.oldest = { action: 'done', at: new Date().toISOString() };
+    state.settings.deleteConfirmed = true;
+    firstResult.resolve({ ok: true, undoUntil: Date.now() + 6_000 });
+    await Promise.all([firstClick, secondClick]);
+
+    expect(disabledBeforeResolve).toBe(true);
+    expect(sendMessage.mock.calls
+      .filter(([message]) => message.type === 'XBI_ACTION' && message.action === 'done')).toHaveLength(1);
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeDefined();
+    expect(buttonNamed(fixture.elements.list, 'Done').disabled).toBe(true);
+  });
+
+  it('releases the global Done gate after the first mutation fails and allows one retry', async () => {
+    const firstResult = deferred();
+    let doneCalls = 0;
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(BASE_STATE);
+      if (message.action === 'done') {
+        doneCalls += 1;
+        return doneCalls === 1 ? firstResult.promise : { ok: false, error: 'retry failed' };
+      }
+      return { ok: false };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    const [firstDone, secondDone] = fixture.elements.list.querySelectorAll('button')
+      .filter((button) => button.textContent === 'Done');
+
+    const firstClick = firstDone.dispatch('click');
+    await vi.waitFor(() => expect(doneCalls).toBe(1));
+    const disabledBeforeResolve = secondDone.disabled;
+    await secondDone.dispatch('click');
+    const callsBeforeResolve = doneCalls;
+    firstResult.resolve({ ok: false, error: 'first failed' });
+    await firstClick;
+
+    const retry = buttonNamed(fixture.elements.list, 'Done');
+    expect(retry.disabled).toBe(false);
+    await retry.dispatch('click');
+
+    expect(disabledBeforeResolve).toBe(true);
+    expect(callsBeforeResolve).toBe(1);
+    expect(doneCalls).toBe(2);
+  });
+
   it('keeps Undo visible while sync, settings, and Keep failures use the error region', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
@@ -554,6 +627,7 @@ describe('popup dashboard', () => {
     expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeUndefined();
     expect(fixture.elements.undoNotice.textContent).toBe('Undo window expired');
     expect(fixture.document.activeElement).toBe(fixture.elements.sync);
+    expect(buttonNamed(fixture.elements.list, 'Done').disabled).toBe(false);
   });
 
   it('never restores a failed Undo button after its deadline passes in flight', async () => {
