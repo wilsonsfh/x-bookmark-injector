@@ -2,7 +2,7 @@
 
 Date: 2026-07-12
 Branch: `feat/x-bookmark-injector`
-Code commits: `0c8f257db7c80076494c2b8cd6b4066b94d5fab2`, `60b36e6719a6b1a185895a2fb1272891a9b680a3`, `0ecebe3dcf7084f01f8bbb90e8af2b6c03449655`
+Code commits: `0c8f257db7c80076494c2b8cd6b4066b94d5fab2`, `60b36e6719a6b1a185895a2fb1272891a9b680a3`, `0ecebe3dcf7084f01f8bbb90e8af2b6c03449655`, `4c369a9ddb27670506d1af85e25058a0ab6766b9`
 Status: Required final-review fixes implemented and committed. Live X validation remains intentionally unclaimed.
 
 ## Findings Closed
@@ -22,6 +22,7 @@ Status: Required final-review fixes implemented and committed. Live X validation
    - Known pre-request failures clear their intent; uncertain post-dispatch outcomes alone enter explicit `phase:'reconciliation'` with bounded Undo timing.
    - Status `0`, `408`, `409`, `425`, `429`, and all `5xx` responses reconcile; only definite non-retryable `4xx` responses clear intent.
    - If `storage.session` fails after confirmed delete, local reconciliation stores `undoUntil` and the action still returns usable recovery metadata.
+   - Uncertain post-dispatch outcomes immediately return `reconciliationPending` plus `undoUntil`; their marker is `reconciliation`, so count-left does not decrement and feed selection blocks repeat deletion.
    - This is a recovery saga, not a claim of atomicity across X and extension storage.
 
 3. Sync versus Undo
@@ -44,6 +45,7 @@ Status: Required final-review fixes implemented and committed. Live X validation
    - Undo receives focus immediately after Done removes its trigger.
    - Focus moves to the first real feed cell after successful Undo or expiry.
    - Content queries projected Undo at startup and on Home return, rendering/focusing recovery after a service-worker restart.
+   - Uncertain-delete copy states that the outcome is uncertain and that Undo safely restores.
 
 8. Engagement row
    - Safe reply, repost, like, view, and bookmark counts are normalized.
@@ -73,25 +75,27 @@ Each new behavior was observed failing before implementation. Representative red
 - HTTP 5xx/retryable statuses were incorrectly treated as definite rejection.
 - Feed content did not query projected Undo after worker restart/Home return.
 - Confirmed delete plus `storage.session` failure returned only an error despite durable local intent.
+- Uncertain post-dispatch responses still surfaced as failure and incorrectly used a confirmed `done` marker.
+- Successful CreateBookmark/local restore was reported as failed when session cleanup remained unavailable.
 
 Focused final run:
 
 ```text
 npx vitest run tests/background.test.js tests/popup.test.js tests/content.test.js
-3 test files passed; 147 tests passed; 0 failed.
+4 test files passed; 155 tests passed; 0 failed.
 ```
 
 Full final run:
 
 ```text
 npm test
-15 test files passed; 277 tests passed; 0 failed.
+15 test files passed; 280 tests passed; 0 failed.
 ```
 
 Security/restart-focused run:
 
 ```text
-4 test files passed; 22 selected tests passed; 131 skipped; 0 failed.
+5 test files passed; 27 selected tests passed; 134 skipped; 0 failed.
 ```
 
 ## Build And Audits
@@ -109,7 +113,7 @@ Security/restart-focused run:
 ## Self-Review
 
 - Scope remained limited to the nine review findings, regression tests, and the single contradictory spec phrase.
-- Existing behavior is preserved by the complete 277-test suite.
+- Existing behavior is preserved by the complete 280-test suite.
 - No auth/cookie/template persistence, broad host permission, telemetry, or backend was added.
 - No E2E checklist boxes were changed and no live X result was fabricated.
 
