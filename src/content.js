@@ -133,6 +133,13 @@ function positionCard() {
   return true;
 }
 
+function focusFeed() {
+  const target = firstTimelineCell();
+  if (!target) return;
+  target.setAttribute('tabindex', '-1');
+  target.focus({ preventScroll: true });
+}
+
 function showUndoToast(tweetId, undoUntil) {
   document.getElementById('xbi-undo')?.remove();
   const toast = document.createElement('div');
@@ -146,6 +153,7 @@ function showUndoToast(tweetId, undoUntil) {
   undo.textContent = 'Undo';
   undo.style.cssText = 'border:0;background:transparent;color:white;text-decoration:underline;font:inherit;cursor:pointer';
   let undoPending = false;
+  let settled = false;
   undo.addEventListener('click', async () => {
     if (undoPending) return;
     undoPending = true;
@@ -156,14 +164,26 @@ function showUndoToast(tweetId, undoUntil) {
     } catch {
       result = null;
     }
-    toast.textContent = result?.ok === true
-      ? 'Bookmark restored'
-      : (result?.ok === false && typeof result.error === 'string' ? result.error : 'Undo failed');
+    if (result?.ok === true) {
+      settled = true;
+      toast.textContent = 'Bookmark restored';
+      focusFeed();
+    } else {
+      toast.textContent = result?.ok === false && typeof result.error === 'string'
+        ? result.error
+        : 'Undo failed';
+    }
     setTimeout(() => toast.remove(), 1_200);
   });
   toast.append(undo);
   document.body.append(toast);
-  setTimeout(() => toast.remove(), Math.max(0, undoUntil - Date.now()));
+  undo.focus();
+  setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    toast.remove();
+    focusFeed();
+  }, Math.max(0, undoUntil - Date.now()));
 }
 
 async function maybeSync() {

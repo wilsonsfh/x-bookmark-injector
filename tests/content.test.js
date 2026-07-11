@@ -42,6 +42,11 @@ class FakeElement {
     this.eventListeners.set(type, handler);
   }
 
+  focus(options) {
+    this.focusOptions = options;
+    document.activeElement = this;
+  }
+
   insertBefore(child, reference) {
     child.remove();
     const index = this.children.indexOf(reference);
@@ -127,6 +132,7 @@ function makeFixture() {
   body.append(primaryColumn);
 
   const document = {
+    activeElement: body,
     body,
     createElement: (tag) => new FakeElement({}, '', tag),
     getElementById: (id) => body.querySelector(`#${id}`),
@@ -522,6 +528,7 @@ describe('bookmark card injection', () => {
     await doneButton.eventListeners.get('click')();
     const toast = fixture.document.getElementById('xbi-undo');
     const undoButton = toast.findAll('button')[0];
+    expect(fixture.document.activeElement).toBe(undoButton);
     const firstClick = undoButton.eventListeners.get('click')();
     const secondClick = undoButton.eventListeners.get('click')();
     await Promise.all([firstClick, secondClick]);
@@ -531,8 +538,30 @@ describe('bookmark card injection', () => {
       [{ type: 'XBI_ACTION', action: 'undo', tweetId: '1806' }],
     ]);
     expect(toast.textContent).toBe('Bookmark restored');
+    expect(fixture.document.activeElement).toBe(fixture.timeline.children[0]);
     await vi.advanceTimersByTimeAsync(1_200);
     expect(fixture.document.getElementById('xbi-undo')).toBeNull();
+  });
+
+  it('restores focus to the feed when the Undo window expires', async () => {
+    const sendMessage = vi.fn(async (message) => (
+      message.action === 'done'
+        ? { ok: true, undoUntil: Date.now() + 6_000 }
+        : { ok: true }
+    ));
+    const fixture = await loadContent({ sendMessage });
+    vi.useFakeTimers();
+    const doneButton = fixture.document.getElementById('xbi-card').findAll('button')[1];
+
+    await doneButton.eventListeners.get('click')();
+    const undoButton = fixture.document.getElementById('xbi-undo').findAll('button')[0];
+    expect(fixture.document.activeElement).toBe(undoButton);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(fixture.document.getElementById('xbi-undo')).toBeNull();
+    expect(fixture.document.activeElement).toBe(fixture.timeline.children[0]);
+    expect(fixture.timeline.children[0].attributes.get('tabindex')).toBe('-1');
   });
 
   it('keeps the Undo toast visible with an error when restore fails', async () => {
@@ -551,7 +580,25 @@ describe('bookmark card injection', () => {
 
   it.each([
     [{ ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: '2020-01-01T00:00:00.000Z' } }, 1],
-    [{ ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: null, syncStatus: 'syncing' } }, 0],
+    [{ ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: null, syncStatus: 'syncing' } }, 1],
+    [{
+      ...TEST_STATE,
+      meta: {
+        ...TEST_STATE.meta,
+        lastSync: null,
+        syncStatus: 'syncing',
+        syncStartedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+      },
+    }, 1],
+    [{
+      ...TEST_STATE,
+      meta: {
+        ...TEST_STATE.meta,
+        lastSync: null,
+        syncStatus: 'syncing',
+        syncStartedAt: new Date().toISOString(),
+      },
+    }, 0],
     [{ ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: 'not-a-date' } }, 0],
   ])('automatically syncs only a valid stale idle cache', async (state, expectedSyncs) => {
     const sendMessage = vi.fn().mockResolvedValue({ ok: true, total: 1 });

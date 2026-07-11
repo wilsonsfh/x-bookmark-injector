@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_STATE, applyDefaults, loadState, savePatch } from '../src/storage.js';
+import {
+  DEFAULT_STATE,
+  SYNC_TIMEOUT_MS,
+  applyDefaults,
+  loadState,
+  recoverStaleSync,
+  savePatch,
+} from '../src/storage.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -10,7 +17,14 @@ describe('applyDefaults', () => {
     expect(applyDefaults({})).toEqual({
       bookmarks: {},
       cleared: {},
-      meta: { total: 0, lastSync: null, syncStatus: 'idle', syncError: null },
+      pendingActions: {},
+      meta: {
+        total: 0,
+        lastSync: null,
+        syncStatus: 'idle',
+        syncError: null,
+        syncStartedAt: null,
+      },
       auth: { queryIds: {} },
       settings: {
         confirmRealDelete: true,
@@ -20,6 +34,25 @@ describe('applyDefaults', () => {
         cardStyle: 'hybrid',
       },
     });
+  });
+
+  it('recovers missing, expired, and future syncing timestamps while preserving fresh syncs', () => {
+    const now = Date.parse('2026-07-11T12:00:00Z');
+    const syncing = applyDefaults({ meta: { syncStatus: 'syncing' } });
+    const fresh = applyDefaults({
+      meta: { syncStatus: 'syncing', syncStartedAt: new Date(now - SYNC_TIMEOUT_MS + 1).toISOString() },
+    });
+    const expired = applyDefaults({
+      meta: { syncStatus: 'syncing', syncStartedAt: new Date(now - SYNC_TIMEOUT_MS).toISOString() },
+    });
+    const future = applyDefaults({
+      meta: { syncStatus: 'syncing', syncStartedAt: new Date(now + 1).toISOString() },
+    });
+
+    expect(recoverStaleSync(syncing, now).meta.syncStatus).toBe('idle');
+    expect(recoverStaleSync(fresh, now)).toBe(fresh);
+    expect(recoverStaleSync(expired, now).meta).toMatchObject({ syncStatus: 'idle', syncStartedAt: null });
+    expect(recoverStaleSync(future, now).meta.syncStatus).toBe('idle');
   });
 
   it('deep-merges specified nested state without deleting defaults', () => {

@@ -160,6 +160,58 @@ describe('buildCardElement', () => {
     expect(onDone).toHaveBeenCalledOnce();
   });
 
+  it('renders only available safe engagement metrics with accessible labels', () => {
+    installDom();
+    const card = buildCardElement(
+      {
+        author: 'Zara Zhang',
+        media: [],
+        saveRank: 1,
+        text: 'Read me',
+        engagement: {
+          replies: 127,
+          reposts: 84,
+          likes: 1_200,
+          views: 290_000,
+          bookmarks: 816,
+        },
+      },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const metrics = card.findAll('span').filter((element) => element.className === 'xbi-engagement-item');
+
+    expect(metrics.map((element) => element.textContent)).toEqual([
+      'Replies 127',
+      'Reposts 84',
+      'Likes 1.2K',
+      'Views 290K',
+      'Bookmarks 816',
+    ]);
+    expect(metrics.map((element) => element['aria-label'])).toEqual([
+      '127 replies',
+      '84 reposts',
+      '1,200 likes',
+      '290,000 views',
+      '816 bookmarks',
+    ]);
+
+    const partial = buildCardElement(
+      {
+        author: 'Zara Zhang',
+        media: [],
+        saveRank: 1,
+        text: 'Read me',
+        engagement: { replies: 0, likes: -1, views: '12' },
+      },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    expect(partial.findAll('span')
+      .filter((element) => element.className === 'xbi-engagement-item')
+      .map((element) => element.textContent)).toEqual(['Replies 0']);
+  });
+
   it('inherits X text contrast across OS and X theme mismatches', () => {
     installDom();
     const card = buildCardElement(

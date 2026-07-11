@@ -60,6 +60,15 @@ const CARD_CSS = `
 #${CARD_ID} .xbi-identity { min-width: 0; overflow-wrap: anywhere; }
 #${CARD_ID} .xbi-handle { opacity: .62; }
 #${CARD_ID} .xbi-text { margin: 0 0 var(--xbi-space-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+#${CARD_ID} .xbi-engagement {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--xbi-space-2) var(--xbi-space-4);
+  margin: var(--xbi-space-2) 0;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-size: var(--xbi-text-label);
+}
+#${CARD_ID} .xbi-engagement-item { white-space: nowrap; }
 #${CARD_ID} .xbi-media {
   display: block;
   width: 100%;
@@ -189,6 +198,29 @@ function action(label, primary) {
   return button;
 }
 
+const ENGAGEMENT_METRICS = [
+  ['replies', 'Replies'],
+  ['reposts', 'Reposts'],
+  ['likes', 'Likes'],
+  ['views', 'Views'],
+  ['bookmarks', 'Bookmarks'],
+];
+
+function buildEngagement(engagement) {
+  if (!engagement || typeof engagement !== 'object' || Array.isArray(engagement)) return null;
+  const row = node('div', null, 'xbi-engagement');
+  const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+  const full = new Intl.NumberFormat('en-US');
+  for (const [key, label] of ENGAGEMENT_METRICS) {
+    const count = engagement[key];
+    if (!Number.isSafeInteger(count) || count < 0) continue;
+    const metric = node('span', `${label} ${compact.format(count)}`, 'xbi-engagement-item');
+    metric.setAttribute('aria-label', `${full.format(count)} ${label.toLowerCase()}`);
+    row.append(metric);
+  }
+  return row.children.length > 0 ? row : null;
+}
+
 export function buildCardElement(bookmark, stats, handlers) {
   const meta = formatCardMeta(bookmark, stats.total, stats.left);
   const card = node('article');
@@ -232,6 +264,9 @@ export function buildCardElement(bookmark, stats, handlers) {
     image.loading = 'lazy';
     card.append(image);
   }
+
+  const engagement = buildEngagement(bookmark.engagement);
+  if (engagement) card.append(engagement);
 
   const postUrl = trustedUrl(bookmark.url, POST_HOSTS, /^\/[^/]+\/status\/\d+\/?$/);
   if (postUrl) {

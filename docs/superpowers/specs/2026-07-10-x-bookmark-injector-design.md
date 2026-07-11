@@ -114,7 +114,7 @@ x.com page
   tweet id), throttle (default: once per day or on manual "Sync now"). Runs
   `DeleteBookmark` on Done.
 - **`popup`** — reads storage: count left, last sync time, "Sync now" button,
-  direction toggle, one-time "confirm real deletes" setting, scrollable list.
+  one-time "confirm real deletes" setting, scrollable list.
 
 ## 8. Data flow
 

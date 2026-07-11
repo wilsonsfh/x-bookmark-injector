@@ -25,7 +25,14 @@ async function loadBackground(set = vi.fn().mockResolvedValue(undefined)) {
         addListener: vi.fn((callback) => { listener = callback; }),
       },
     },
-    storage: { local: { set } },
+    storage: {
+      local: { get: vi.fn().mockResolvedValue({}), set },
+      session: {
+        get: vi.fn().mockResolvedValue({}),
+        set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
+      },
+    },
   });
   await import('../src/background.js');
   return {
@@ -99,12 +106,20 @@ async function loadOperationalBackground({
   pageRequest,
   initialState = OPERATIONAL_STATE,
   setImplementation = async () => {},
+  sessionSetImplementation = async () => {},
+  stores = {
+    local: structuredClone(initialState),
+    session: {},
+  },
 } = {}) {
   let listener;
-  let state = structuredClone(initialState);
   const set = vi.fn(async (patch) => {
     await setImplementation(patch);
-    state = { ...state, ...structuredClone(patch) };
+    stores.local = { ...stores.local, ...structuredClone(patch) };
+  });
+  const sessionSet = vi.fn(async (patch) => {
+    await sessionSetImplementation(patch);
+    stores.session = { ...stores.session, ...structuredClone(patch) };
   });
   const sendMessage = vi.fn(async (_tabId, message) => {
     if (message.type === 'XBI_GET_PAGE_AUTH') return structuredClone(SESSION_AUTH);
@@ -113,19 +128,34 @@ async function loadOperationalBackground({
   });
   vi.stubGlobal('chrome', {
     runtime: { onMessage: { addListener: vi.fn((callback) => { listener = callback; }) } },
-    storage: { local: { get: vi.fn(async () => structuredClone(state)), set } },
+    storage: {
+      local: { get: vi.fn(async () => structuredClone(stores.local)), set },
+      session: {
+        get: vi.fn(async () => structuredClone(stores.session)),
+        set: sessionSet,
+        remove: vi.fn(async (key) => { delete stores.session[key]; }),
+      },
+    },
     tabs: { query: vi.fn(), sendMessage },
   });
   await import('../src/background.js');
   return {
-    getState: () => structuredClone(state),
+    getState: () => structuredClone(stores.local),
+    getSession: () => structuredClone(stores.session),
     sendMessage,
+    sessionSet,
     set,
+    stores,
     invoke(message, sender = { tab: { id: 7 } }) {
       return new Promise((resolve) => {
         const returned = listener(message, sender, resolve);
         if (returned !== true) throw new Error('Expected async message channel');
       });
+    },
+    invokeSync(message, sender = { tab: { id: 7 } }) {
+      const sendResponse = vi.fn();
+      const returned = listener(message, sender, sendResponse);
+      return { returned, response: sendResponse.mock.calls[0]?.[0] };
     },
   };
 }
@@ -445,6 +475,29 @@ describe('service-worker bookmark sync', () => {
       .resolves.toEqual({ ok: true, total: 1 });
     expect(pageRequest).toHaveBeenCalledOnce();
   });
+
+  it('invalidates only the stale Bookmarks query ID on 404 and retains the old cache', async () => {
+    const background = await loadOperationalBackground({
+      pageRequest: vi.fn().mockResolvedValue({ ok: false, status: 404, error: 'not found' }),
+    });
+
+    await expect(background.invoke({ type: 'XBI_SYNC' })).resolves.toMatchObject({
+      ok: false,
+      status: 404,
+    });
+
+    expect(background.getState().bookmarks).toEqual(OPERATIONAL_STATE.bookmarks);
+    expect(background.getState().auth.queryIds).toEqual({
+      DeleteBookmark: 'delete123',
+      CreateBookmark: 'create123',
+    });
+    expect(background.getState().meta.syncError).toContain('Open X Bookmarks to recapture');
+    const session = background.invokeSync({ type: 'XBI_GET_SESSION_AUTH' });
+    expect(session.response.queryIds).toEqual({
+      DeleteBookmark: 'delete123',
+      CreateBookmark: 'create123',
+    });
+  });
 });
 
 describe('service-worker bookmark actions', () => {
@@ -537,6 +590,159 @@ describe('service-worker bookmark actions', () => {
       .toEqual(['DeleteBookmark', 'CreateBookmark']);
   });
 
+  it('persists a delete intent and bookmark snapshot before calling X', async () => {
+    let resolveDelete;
+    const pageRequest = vi.fn(() => new Promise((resolve) => { resolveDelete = resolve; }));
+    const background = await loadOperationalBackground({ pageRequest });
+
+    const done = background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    await vi.waitFor(() => expect(pageRequest).toHaveBeenCalledOnce());
+
+    expect(background.getState().pendingActions.old).toMatchObject({
+      action: 'delete',
+      phase: 'prepared',
+      bookmark: OPERATIONAL_STATE.bookmarks.old,
+    });
+    expect(background.getState().cleared).toEqual({});
+
+    resolveDelete({ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'Done' } } });
+    await done;
+  });
+
+  it('clears the prepared intent when X rejects the delete', async () => {
+    const background = await loadOperationalBackground({
+      pageRequest: vi.fn().mockResolvedValue({ ok: false, status: 503, error: 'delete failed' }),
+    });
+
+    await expect(background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
+      .resolves.toMatchObject({ ok: false, error: 'delete failed' });
+
+    expect(background.getState().pendingActions).toEqual({});
+    expect(background.getState().cleared).toEqual({});
+    expect(background.getState().bookmarks).toEqual(OPERATIONAL_STATE.bookmarks);
+  });
+
+  it('restores an unexpired Undo authorization after a service-worker restart', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const stores = { local: structuredClone(OPERATIONAL_STATE), session: {} };
+    const pageRequest = vi.fn(async (request) => ({
+      ok: true,
+      status: 200,
+      payload: request.url.endsWith('/DeleteBookmark')
+        ? { data: { tweet_bookmark_delete: 'Done' } }
+        : { data: { tweet_bookmark_put: 'Done' } },
+    }));
+    const firstWorker = await loadOperationalBackground({ pageRequest, stores });
+
+    const done = await firstWorker.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    expect(done).toEqual({ ok: true, undoUntil: Date.now() + 6_000 });
+
+    vi.resetModules();
+    const restartedWorker = await loadOperationalBackground({ pageRequest, stores });
+
+    await expect(restartedWorker.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' }))
+      .resolves.toEqual({ ok: true });
+    expect(pageRequest.mock.calls.map(([request]) => request.url.split('/').at(-1)))
+      .toEqual(['DeleteBookmark', 'CreateBookmark']);
+  });
+
+  it('retains reconciliation and Undo when local publication fails after X deletes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const stores = { local: structuredClone(OPERATIONAL_STATE), session: {} };
+    let failPublication = true;
+    const setImplementation = vi.fn(async (patch) => {
+      if (failPublication && patch.cleared) {
+        failPublication = false;
+        throw new Error('local publication failed');
+      }
+    });
+    const pageRequest = vi.fn(async (request) => ({
+      ok: true,
+      status: 200,
+      payload: request.url.endsWith('/DeleteBookmark')
+        ? { data: { tweet_bookmark_delete: 'Done' } }
+        : { data: { tweet_bookmark_put: 'Done' } },
+    }));
+    const firstWorker = await loadOperationalBackground({
+      pageRequest,
+      setImplementation,
+      stores,
+    });
+
+    await expect(firstWorker.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
+      .resolves.toMatchObject({ ok: false, error: 'local publication failed' });
+    expect(stores.local.pendingActions.old.phase).toBe('prepared');
+    expect(stores.session.pendingUndo.old).toMatchObject({
+      undoUntil: Date.now() + 6_000,
+      bookmark: OPERATIONAL_STATE.bookmarks.old,
+    });
+
+    vi.resetModules();
+    const restartedWorker = await loadOperationalBackground({ pageRequest, stores });
+    await expect(restartedWorker.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' }))
+      .resolves.toEqual({ ok: true });
+    expect(restartedWorker.getState().pendingActions).toEqual({});
+    expect(restartedWorker.getState().bookmarks.old).toEqual(OPERATIONAL_STATE.bookmarks.old);
+  });
+
+  it('recovers a prepared intent when session authorization persistence fails after X deletes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const stores = { local: structuredClone(OPERATIONAL_STATE), session: {} };
+    const pageRequest = vi.fn(async (request) => ({
+      ok: true,
+      status: 200,
+      payload: request.url.endsWith('/DeleteBookmark')
+        ? { data: { tweet_bookmark_delete: 'Done' } }
+        : { data: { tweet_bookmark_put: 'Done' } },
+    }));
+    const firstWorker = await loadOperationalBackground({
+      pageRequest,
+      sessionSetImplementation: vi.fn().mockRejectedValue(new Error('session storage failed')),
+      stores,
+    });
+
+    await expect(firstWorker.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
+      .resolves.toMatchObject({ ok: false, error: 'session storage failed' });
+    expect(stores.local.pendingActions.old.phase).toBe('prepared');
+    expect(stores.local.cleared).toEqual({});
+
+    vi.resetModules();
+    const restartedWorker = await loadOperationalBackground({ pageRequest, stores });
+    const recoveredState = await restartedWorker.invoke({ type: 'XBI_GET_STATE' });
+    expect(recoveredState.cleared.old).toMatchObject({ action: 'done', reconciliation: true });
+    expect(recoveredState.pendingActions.old.phase).toBe('reconciliation');
+
+    await expect(restartedWorker.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' }))
+      .resolves.toEqual({ ok: true });
+    expect(restartedWorker.getState().cleared.old).toBeUndefined();
+  });
+
+  it('reinserts the snapshotted bookmark when sync removes it before Undo', async () => {
+    vi.useFakeTimers();
+    const pageRequest = vi.fn(async (request) => {
+      if (request.url.endsWith('/DeleteBookmark')) {
+        return { ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'Done' } } };
+      }
+      if (request.url.endsWith('/CreateBookmark')) {
+        return { ok: true, status: 200, payload: { data: { tweet_bookmark_put: 'Done' } } };
+      }
+      return { ok: true, status: 200, payload: bookmarkPayload([]) };
+    });
+    const background = await loadOperationalBackground({ pageRequest });
+    await background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+
+    await expect(background.invoke({ type: 'XBI_SYNC' })).resolves.toEqual({ ok: true, total: 0 });
+    expect(background.getState().bookmarks).toEqual({});
+
+    await expect(background.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' }))
+      .resolves.toEqual({ ok: true });
+    expect(background.getState().bookmarks.old).toEqual(OPERATIONAL_STATE.bookmarks.old);
+    expect(background.getState().cleared.old).toBeUndefined();
+  });
+
   it('does not call X for an expired Undo and retains the Done marker', async () => {
     vi.useFakeTimers();
     const pageRequest = vi.fn().mockResolvedValue({
@@ -593,23 +799,23 @@ describe('service-worker bookmark actions', () => {
 
   it('starts the full 6-second Undo window after a queued local publication completes', async () => {
     vi.useFakeTimers();
-    let releaseFirstWrite;
-    const setImplementation = vi.fn()
-      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirstWrite = resolve; }))
-      .mockResolvedValue(undefined);
+    let releasePublication;
+    const setImplementation = vi.fn((patch) => (
+      patch.cleared
+        ? new Promise((resolve) => { releasePublication = resolve; })
+        : Promise.resolve()
+    ));
     const pageRequest = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       payload: { data: { tweet_bookmark_delete: 'Done' } },
     });
     const background = await loadOperationalBackground({ pageRequest, setImplementation });
-    const keep = background.invoke({ type: 'XBI_ACTION', action: 'keep', tweetId: 'other' });
-    await vi.waitFor(() => expect(setImplementation).toHaveBeenCalledOnce());
     const done = background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
     await vi.waitFor(() => expect(pageRequest).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(releasePublication).toBeTypeOf('function'));
     await vi.advanceTimersByTimeAsync(7_000);
-    releaseFirstWrite();
-    await keep;
+    releasePublication();
 
     await expect(done).resolves.toEqual({ ok: true, undoUntil: Date.now() + 6_000 });
   });

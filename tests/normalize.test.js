@@ -58,4 +58,55 @@ describe('normalizeTweet', () => {
   it('returns null when id is missing', () => {
     expect(normalizeTweet({ legacy: {} })).toBeNull();
   });
+
+  it('rejects an ID-only or blank-content tweet but preserves text and media variants', () => {
+    expect(normalizeTweet({ rest_id: '1806', legacy: { full_text: '   ' } })).toBeNull();
+    expect(normalizeTweet({ rest_id: '   ', legacy: { full_text: 'content' } })).toBeNull();
+    expect(normalizeTweet({ rest_id: '1807', legacy: { text: 'fallback text' } })).toMatchObject({
+      id: '1807',
+      text: 'fallback text',
+    });
+    expect(normalizeTweet({
+      rest_id: '1808',
+      legacy: {
+        full_text: '',
+        entities: { media: [{ type: 'photo', media_url_https: 'https://pbs.twimg.com/media.jpg' }] },
+      },
+    })).toMatchObject({
+      id: '1808',
+      text: '',
+      media: [{ url: 'https://pbs.twimg.com/media.jpg' }],
+    });
+  });
+
+  it('normalizes available engagement counts and omits unsafe values', () => {
+    expect(normalizeTweet({
+      rest_id: '1810',
+      legacy: {
+        full_text: 'engaging post',
+        reply_count: 12,
+        retweet_count: 34,
+        favorite_count: 56,
+        bookmark_count: 78,
+      },
+      views: { count: '9012' },
+    }).engagement).toEqual({
+      replies: 12,
+      reposts: 34,
+      likes: 56,
+      views: 9012,
+      bookmarks: 78,
+    });
+
+    expect(normalizeTweet({
+      rest_id: '1811',
+      legacy: {
+        full_text: 'partial metrics',
+        reply_count: -1,
+        favorite_count: 'not-a-number',
+        bookmark_count: 0,
+      },
+      views: { count: Number.MAX_SAFE_INTEGER + 1 },
+    }).engagement).toEqual({ bookmarks: 0 });
+  });
 });
