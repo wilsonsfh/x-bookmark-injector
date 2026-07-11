@@ -1,7 +1,7 @@
 {
   "name": "x-bookmark-injector",
   "version": "0.1.0",
-  "description": "A private Chromium extension that resurfaces random X bookmarks in the For You feed.",
+  "description": "A personal Chromium extension that resurfaces random X bookmarks in the For You feed.",
   "private": true,
   "repository": {
     "type": "git",

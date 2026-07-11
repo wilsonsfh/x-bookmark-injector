@@ -1,6 +1,6 @@
 # X Bookmark Injector
 
-A private Chromium MV3 extension that puts one random saved X bookmark at the top of the **For You** feed as a simple native-looking post. It shows the bookmark's save-order rank, the post's published date, and how many cached bookmarks remain.
+A personal Chromium MV3 extension that puts one random saved X bookmark at the top of the **For You** feed as a simple native-looking post. It shows the bookmark's save-order rank, the post's published date, and how many cached bookmarks remain.
 
 ## Release status
 
@@ -134,7 +134,7 @@ Live Option B evidence: extension load, current-X capture, HTTP-200 pagination, 
 
 1. Run `npm install && npm run build`.
 2. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `dist/`.
-3. Keep the extension local and private. Do not publish it without replacing the internal-X integration and completing an appropriate policy/security review.
+3. Keep the unpacked extension local to your browser profile. The source repository is public, but this undocumented-X integration should not be submitted to an extension store without a separate policy/security review.
 
 ## First-run capture
 
