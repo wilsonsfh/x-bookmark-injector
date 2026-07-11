@@ -1,4 +1,7 @@
 export async function collectBookmarkPages(fetchPage, { maxPages = 100 } = {}) {
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 100) {
+    throw new Error('maxPages must be an integer from 1 to 100');
+  }
   const tweets = [];
   const seenCursors = new Set();
   let cursor = null;

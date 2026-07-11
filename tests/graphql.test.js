@@ -130,7 +130,9 @@ describe('parseBookmarks', () => {
         bookmark_timeline: {
           timeline: {
             instructions: [{
+              type: 'TimelineAddEntries',
               entries: [{
+                entryId: 'module-legacy',
                 content: {
                   items: [{
                     item: {
@@ -161,5 +163,67 @@ describe('parseBookmarks', () => {
 
   it('throws a sanitized integration error when the timeline is absent', () => {
     expect(() => parseBookmarks({ data: {} })).toThrowError(new Error('X bookmarks integration response invalid'));
+  });
+
+  it('ignores validated non-tweet cursor and empty module entries', () => {
+    const payload = {
+      data: {
+        bookmark_timeline_v2: {
+          timeline: {
+            instructions: [{
+              type: 'TimelineAddEntries',
+              entries: [
+                { entryId: 'cursor-top-0', content: { cursorType: 'Top', value: 'TOP' } },
+                { entryId: 'module-empty-0', content: { items: [] } },
+              ],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(parseBookmarks(payload)).toEqual({ tweets: [], nextCursor: null });
+  });
+
+  it.each([
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{}] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'Unknown', entries: [] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: {} }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [null] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'unknown-0', content: {} }] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'cursor-bottom-0', content: { cursorType: 'Bottom' } }] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'cursor-new-0', content: { cursorType: 'NewCursorType', value: 'CURSOR' } }] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'module-bad-0', content: { items: {} } }] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'tweet-1', content: { itemContent: {} } }] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'tweet-1', content: { itemContent: { tweet_results: {} } } }] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'tweet-1', content: { itemContent: { tweet_results: { result: { legacy: {} } } } } }] }] } } } }],
+    [{ errors: [{ message: 'partial failure' }], ...fixture }],
+  ])('rejects malformed or unrecognized bookmark schema %#', (payload) => {
+    expect(() => parseBookmarks(payload)).toThrowError(new Error('X bookmarks integration response invalid'));
+  });
+
+  it('rejects a malformed intended tweet inside a module', () => {
+    const payload = {
+      data: {
+        bookmark_timeline_v2: {
+          timeline: {
+            instructions: [{
+              type: 'TimelineAddEntries',
+              entries: [{
+                entryId: 'module-tweets-0',
+                content: {
+                  items: [{
+                    entryId: 'tweet-1',
+                    item: { itemContent: { tweet_results: { result: { legacy: {} } } } },
+                  }],
+                },
+              }],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(() => parseBookmarks(payload)).toThrowError(new Error('X bookmarks integration response invalid'));
   });
 });

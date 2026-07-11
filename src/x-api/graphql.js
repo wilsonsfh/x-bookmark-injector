@@ -1,6 +1,7 @@
 import { BOOKMARK_FEATURES, OPERATIONS, X_ORIGIN } from './constants.js';
 
 const CAPTURED_HEADER_DENYLIST = new Set(['authorization', 'x-csrf-token', 'cookie', 'set-cookie']);
+const BOOKMARK_CURSOR_TYPES = new Set(['Top', 'Bottom', 'ShowMore', 'ShowMoreThreads', 'Gap']);
 
 function capturedHeadersFor(operation, auth) {
   return Object.fromEntries(Object.entries(auth.operationHeaders?.[operation] ?? {})
@@ -71,26 +72,83 @@ export function buildMutationRequest(operation, auth, tweetId) {
   };
 }
 
-function resultFromEntry(entry) {
-  const direct = entry?.content?.itemContent?.tweet_results?.result;
-  if (direct) return [direct.tweet ?? direct];
+function integrationError() {
+  return new Error('X bookmarks integration response invalid');
+}
 
-  return (entry?.content?.items ?? []).map((item) => {
-    const result = item?.item?.itemContent?.tweet_results?.result;
-    return result?.tweet ?? result;
-  }).filter(Boolean);
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function tweetFromItemContent(itemContent) {
+  if (!isRecord(itemContent) || !isRecord(itemContent.tweet_results)
+    || !Object.hasOwn(itemContent.tweet_results, 'result')) {
+    throw integrationError();
+  }
+  const result = itemContent.tweet_results.result;
+  if (!isRecord(result)) throw integrationError();
+  const tweet = Object.hasOwn(result, 'tweet') ? result.tweet : result;
+  if (!isRecord(tweet)) throw integrationError();
+  const id = tweet.rest_id ?? tweet.legacy?.id_str;
+  if (typeof id !== 'string' || !id.trim()) throw integrationError();
+  return tweet;
+}
+
+function parseEntry(entry) {
+  if (!isRecord(entry) || typeof entry.entryId !== 'string' || !entry.entryId
+    || !isRecord(entry.content)) {
+    throw integrationError();
+  }
+  const { content, entryId } = entry;
+  if (entryId.startsWith('cursor-') || Object.hasOwn(content, 'cursorType')) {
+    if (!BOOKMARK_CURSOR_TYPES.has(content.cursorType)
+      || typeof content.value !== 'string' || !content.value) {
+      throw integrationError();
+    }
+    return { tweets: [], cursor: content.cursorType === 'Bottom' ? content.value : null };
+  }
+  if (entryId.startsWith('module-') || Object.hasOwn(content, 'items')) {
+    if (!Array.isArray(content.items)) throw integrationError();
+    const tweets = [];
+    for (const item of content.items) {
+      if (!isRecord(item)) throw integrationError();
+      const itemContent = item.item?.itemContent;
+      const intendedTweet = item.entryId?.startsWith('tweet-')
+        || (isRecord(itemContent) && Object.hasOwn(itemContent, 'tweet_results'));
+      if (intendedTweet) tweets.push(tweetFromItemContent(itemContent));
+    }
+    return { tweets, cursor: null };
+  }
+  if (entryId.startsWith('tweet-') || Object.hasOwn(content, 'itemContent')) {
+    return { tweets: [tweetFromItemContent(content.itemContent)], cursor: null };
+  }
+  throw integrationError();
 }
 
 export function parseBookmarks(payload) {
+  if (!isRecord(payload)
+    || (payload.errors !== undefined
+      && (!Array.isArray(payload.errors) || payload.errors.length > 0))) {
+    throw integrationError();
+  }
   const timeline = payload?.data?.bookmark_timeline_v2?.timeline
     ?? payload?.data?.bookmark_timeline?.timeline;
   if (!Array.isArray(timeline?.instructions)) {
-    throw new Error('X bookmarks integration response invalid');
+    throw integrationError();
   }
 
-  const instructions = timeline.instructions;
-  const entries = instructions.flatMap((instruction) => instruction.entries ?? []);
-  const tweets = entries.flatMap(resultFromEntry);
-  const nextCursor = entries.find((entry) => entry?.content?.cursorType === 'Bottom')?.content?.value ?? null;
+  const tweets = [];
+  let nextCursor = null;
+  for (const instruction of timeline.instructions) {
+    if (!isRecord(instruction) || instruction.type !== 'TimelineAddEntries'
+      || !Array.isArray(instruction.entries)) {
+      throw integrationError();
+    }
+    for (const entry of instruction.entries) {
+      const parsed = parseEntry(entry);
+      tweets.push(...parsed.tweets);
+      if (parsed.cursor !== null) nextCursor = parsed.cursor;
+    }
+  }
   return { tweets, nextCursor };
 }

@@ -27,6 +27,13 @@ describe('collectBookmarkPages', () => {
     expect(fetchPage).toHaveBeenCalledTimes(2);
   });
 
+  it.each([Infinity, 0, 1.5, 101])('rejects invalid maxPages value %s before fetching', async (maxPages) => {
+    const fetchPage = vi.fn();
+
+    await expect(collectBookmarkPages(fetchPage, { maxPages })).rejects.toThrow('maxPages');
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
   it.each([
     undefined,
     null,

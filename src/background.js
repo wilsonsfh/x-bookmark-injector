@@ -110,8 +110,14 @@ function syncBookmarks(tabId) {
   return syncInFlight;
 }
 
-function mutationSucceeded(payload) {
-  return payload
+function mutationSucceeded(operation, payload) {
+  const successField = operation === OPERATIONS.DELETE
+    ? 'tweet_bookmark_delete'
+    : operation === OPERATIONS.CREATE
+      ? 'tweet_bookmark_put'
+      : null;
+  return successField !== null
+    && payload
     && typeof payload === 'object'
     && !Array.isArray(payload)
     && (payload.errors === undefined
@@ -119,7 +125,7 @@ function mutationSucceeded(payload) {
     && payload.data
     && typeof payload.data === 'object'
     && !Array.isArray(payload.data)
-    && Object.values(payload.data).some((value) => value !== null && value !== undefined && value !== false);
+    && payload.data[successField] === 'Done';
 }
 
 function updateActionState(createPatch) {
@@ -150,7 +156,7 @@ async function act(message, sender) {
   const auth = await authFor(tab.id);
   const operation = message.action === 'done' ? OPERATIONS.DELETE : OPERATIONS.CREATE;
   const payload = await pageRequest(tab.id, buildMutationRequest(operation, auth, message.tweetId));
-  if (!mutationSucceeded(payload)) throw new Error('X mutation response invalid');
+  if (!mutationSucceeded(operation, payload)) throw new Error('X mutation response invalid');
 
   if (message.action === 'done') {
     await updateActionState((state) => ({

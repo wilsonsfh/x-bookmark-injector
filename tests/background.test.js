@@ -68,6 +68,7 @@ const OPERATIONAL_STATE = {
 
 function bookmarkPayload(ids, nextCursor = null) {
   const entries = ids.map((id) => ({
+    entryId: `tweet-${id}`,
     content: {
       itemContent: {
         tweet_results: {
@@ -80,8 +81,17 @@ function bookmarkPayload(ids, nextCursor = null) {
       },
     },
   }));
-  if (nextCursor) entries.push({ content: { cursorType: 'Bottom', value: nextCursor } });
-  return { data: { bookmark_timeline_v2: { timeline: { instructions: [{ entries }] } } } };
+  if (nextCursor) entries.push({
+    entryId: 'cursor-bottom-0',
+    content: { cursorType: 'Bottom', value: nextCursor },
+  });
+  return {
+    data: {
+      bookmark_timeline_v2: {
+        timeline: { instructions: [{ type: 'TimelineAddEntries', entries }] },
+      },
+    },
+  };
 }
 
 async function loadOperationalBackground({
@@ -280,6 +290,35 @@ describe('service-worker bookmark sync', () => {
     [{ ok: false, status: 429, error: 'rate limited' }, 'Rate limited by X; try later'],
     [undefined, 'X request failed'],
     [{ ok: true, status: 200, payload: undefined }, 'response invalid'],
+    [{
+      ok: true,
+      status: 200,
+      payload: {
+        data: {
+          bookmark_timeline_v2: {
+            timeline: {
+              instructions: [{
+                type: 'TimelineAddEntries',
+                entries: [{
+                  entryId: 'tweet-bad',
+                  content: { itemContent: { tweet_results: { result: { legacy: {} } } } },
+                }],
+              }],
+            },
+          },
+        },
+      },
+    }, 'integration response invalid'],
+    [{
+      ok: true,
+      status: 200,
+      payload: (() => {
+        const payload = bookmarkPayload(['bad-date']);
+        payload.data.bookmark_timeline_v2.timeline.instructions[0]
+          .entries[0].content.itemContent.tweet_results.result.legacy.created_at = 'not-a-date';
+        return payload;
+      })(),
+    }, 'Invalid time value'],
   ])('retains the old cache when a page fails: %j', async (response, expectedError) => {
     const background = await loadOperationalBackground({ pageRequest: vi.fn().mockResolvedValue(response) });
 
@@ -356,6 +395,11 @@ describe('service-worker bookmark actions', () => {
     [{ ok: true, status: 200, payload: { errors: [{ message: 'nope' }], data: {} } }, 'mutation response invalid'],
     [{ ok: true, status: 200, payload: { errors: { message: 'nope' }, data: { result: 'Done' } } }, 'mutation response invalid'],
     [{ ok: true, status: 200, payload: { data: { result: null } } }, 'mutation response invalid'],
+    [{ ok: true, status: 200, payload: { data: { unrelated: 'Done' } } }, 'mutation response invalid'],
+    [{ ok: true, status: 200, payload: { data: { tweet_bookmark_put: 'Done' } } }, 'mutation response invalid'],
+    [{ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: { success: false } } } }, 'mutation response invalid'],
+    [{ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'done' } } }, 'mutation response invalid'],
+    [{ ok: true, status: 200, payload: { errors: [{ message: 'nope' }], data: { tweet_bookmark_delete: 'Done' } } }, 'mutation response invalid'],
   ])('does not mark Done unless X returns a validated mutation success: %j', async (response, error) => {
     const background = await loadOperationalBackground({ pageRequest: vi.fn().mockResolvedValue(response) });
 
@@ -364,6 +408,29 @@ describe('service-worker bookmark actions', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining(error) });
     expect(background.getState().cleared).toEqual({});
     expect(background.getState().settings.deleteConfirmed).toBe(false);
+  });
+
+  it.each([
+    { data: { unrelated: 'Done' } },
+    { data: { tweet_bookmark_delete: 'Done' } },
+    { data: { tweet_bookmark_put: { success: false } } },
+    { data: { tweet_bookmark_put: 'done' } },
+    { errors: [{ message: 'nope' }], data: { tweet_bookmark_put: 'Done' } },
+  ])('retains Done unless CreateBookmark returns its exact success field: %j', async (payload) => {
+    vi.useFakeTimers();
+    const pageRequest = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        payload: { data: { tweet_bookmark_delete: 'Done' } },
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, payload });
+    const background = await loadOperationalBackground({ pageRequest });
+    await background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+
+    await expect(background.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' }))
+      .resolves.toMatchObject({ ok: false, error: expect.stringContaining('mutation response invalid') });
+    expect(background.getState().cleared.old.action).toBe('done');
   });
 
   it('marks Done only after delete success and restores it through CreateBookmark within 6 seconds', async () => {
@@ -429,7 +496,9 @@ describe('service-worker bookmark actions', () => {
     const pageRequest = vi.fn(async (request) => ({
       ok: true,
       status: 200,
-      payload: { data: { result: request.url.endsWith('/DeleteBookmark') ? 'deleted' : 'created' } },
+      payload: request.url.endsWith('/DeleteBookmark')
+        ? { data: { tweet_bookmark_delete: 'Done' } }
+        : { data: { tweet_bookmark_put: 'Done' } },
     }));
     const background = await loadOperationalBackground({ pageRequest });
     await background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
@@ -478,6 +547,69 @@ describe('service-worker bookmark actions', () => {
     expect(results[0]).toEqual(results[1]);
     expect(pageRequest).toHaveBeenCalledOnce();
     expect(background.set.mock.calls.filter(([patch]) => patch.cleared)).toHaveLength(1);
+  });
+
+  it('orders concurrent Done then Keep and leaves the final Keep marker', async () => {
+    vi.useFakeTimers();
+    let resolveDelete;
+    const pageRequest = vi.fn(() => new Promise((resolve) => { resolveDelete = resolve; }));
+    const background = await loadOperationalBackground({ pageRequest });
+    const done = background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    await vi.waitFor(() => expect(pageRequest).toHaveBeenCalledOnce());
+    const keep = background.invoke({ type: 'XBI_ACTION', action: 'keep', tweetId: 'old' });
+    resolveDelete({ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'Done' } } });
+
+    await Promise.all([done, keep]);
+
+    expect(pageRequest.mock.calls.map(([request]) => request.url.split('/').at(-1)))
+      .toEqual(['DeleteBookmark']);
+    expect(background.getState().cleared.old.action).toBe('keep');
+  });
+
+  it('orders concurrent Done then Undo as DeleteBookmark then CreateBookmark', async () => {
+    vi.useFakeTimers();
+    let resolveDelete;
+    const pageRequest = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveDelete = resolve; }))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        payload: { data: { tweet_bookmark_put: 'Done' } },
+      });
+    const background = await loadOperationalBackground({ pageRequest });
+    const done = background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    await vi.waitFor(() => expect(pageRequest).toHaveBeenCalledOnce());
+    const undo = background.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' });
+    resolveDelete({ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'Done' } } });
+
+    await Promise.all([done, undo]);
+
+    expect(pageRequest.mock.calls.map(([request]) => request.url.split('/').at(-1)))
+      .toEqual(['DeleteBookmark', 'CreateBookmark']);
+    expect(background.getState().cleared.old).toBeUndefined();
+  });
+
+  it('orders concurrent Undo then Done as CreateBookmark then DeleteBookmark', async () => {
+    vi.useFakeTimers();
+    let resolveCreate;
+    const pageRequest = vi.fn(async (request) => {
+      if (request.url.endsWith('/CreateBookmark')) {
+        return new Promise((resolve) => { resolveCreate = resolve; });
+      }
+      return { ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'Done' } } };
+    });
+    const background = await loadOperationalBackground({ pageRequest });
+    await background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    const undo = background.invoke({ type: 'XBI_ACTION', action: 'undo', tweetId: 'old' });
+    await vi.waitFor(() => expect(pageRequest).toHaveBeenCalledTimes(2));
+    const done = background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    resolveCreate({ ok: true, status: 200, payload: { data: { tweet_bookmark_put: 'Done' } } });
+
+    await Promise.all([undo, done]);
+
+    expect(pageRequest.mock.calls.map(([request]) => request.url.split('/').at(-1)))
+      .toEqual(['DeleteBookmark', 'CreateBookmark', 'DeleteBookmark']);
+    expect(background.getState().cleared.old.action).toBe('done');
   });
 
   it('serializes concurrent local actions so cleared markers cannot overwrite each other', async () => {
