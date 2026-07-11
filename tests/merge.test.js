@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mergeBookmarks } from '../src/core/merge.js';
 
 describe('mergeBookmarks', () => {
@@ -12,7 +12,49 @@ describe('mergeBookmarks', () => {
     expect(merged.z).toEqual({ id: 'z', text: 'fresh', fetchedAt: now });
   });
   it('last duplicate id wins', () => {
-    const merged = mergeBookmarks({}, [{ id: 'a', text: '1' }, { id: 'a', text: '2' }], now);
-    expect(merged.a.text).toBe('2');
+    const incoming = [
+      { id: 'a', text: '1', earlierOnly: true },
+      { id: 'a', text: '2' },
+    ];
+
+    expect(mergeBookmarks({}, incoming, now).a).toEqual({
+      id: 'a',
+      text: '2',
+      fetchedAt: now,
+    });
+  });
+
+  it('stores reserved ids as enumerable own properties', () => {
+    const merged = mergeBookmarks({}, [{ id: '__proto__', text: 'reserved' }], now);
+    const bookmark = { id: '__proto__', text: 'reserved', fetchedAt: now };
+
+    expect(Object.getPrototypeOf(merged)).toBeNull();
+    expect(Object.keys(merged)).toEqual(['__proto__']);
+    expect(Object.values(merged)).toEqual([bookmark]);
+    expect(merged.__proto__).toEqual(bookmark);
+  });
+
+  it('uses the current time when now is omitted', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      expect(mergeBookmarks({}, [{ id: 'a' }]).a.fetchedAt).toBe(now);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not mutate existing or incoming bookmarks', () => {
+    const existingBookmark = Object.freeze({ id: 'a', text: 'old', local: true });
+    const incomingBookmark = Object.freeze({ id: 'a', text: 'new' });
+    const existing = Object.freeze({ a: existingBookmark });
+    const incoming = Object.freeze([incomingBookmark]);
+
+    const merged = mergeBookmarks(existing, incoming, now);
+
+    expect(existing).toEqual({ a: { id: 'a', text: 'old', local: true } });
+    expect(incoming).toEqual([{ id: 'a', text: 'new' }]);
+    expect(merged.a).toEqual({ id: 'a', text: 'new', local: true, fetchedAt: now });
   });
 });

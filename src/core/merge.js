@@ -1,5 +1,5 @@
 export function mergeBookmarks(existing, incoming, now = new Date().toISOString()) {
-  const merged = {};
+  const merged = Object.create(null);
   for (const b of incoming) {
     merged[b.id] = { ...(existing[b.id] ?? {}), ...b, fetchedAt: now };
   }
