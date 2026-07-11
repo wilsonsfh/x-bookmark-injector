@@ -1,8 +1,225 @@
 <!doctype html>
-<html><head><meta charset="utf-8" />
-<style>body{width:280px;font:14px system-ui;margin:0;padding:14px;background:#000;color:#e7e9ea}</style>
-</head><body>
-  <h3 style="margin:0 0 8px">Bookmark Injector</h3>
-  <div id="app">Loading…</div>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>X Bookmark Injector</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #000;
+      --surface: #16181c;
+      --surface-hover: #181818;
+      --line: #2f3336;
+      --text: #e7e9ea;
+      --muted: #8b98a5;
+      --blue: #1d9bf0;
+      --blue-hover: #1a8cd8;
+      --danger: #ff7a7a;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --radius-pill: 999px;
+      --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--blue);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      width: 360px;
+      max-height: 600px;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    header,
+    .controls,
+    .settings {
+      padding: 14px var(--space-4);
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0 0 2px;
+      font-size: 17px;
+      line-height: 1.2;
+      letter-spacing: -.01em;
+    }
+
+    .muted { color: var(--muted); }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+    }
+
+    .count {
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -1px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .count small {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+
+    button,
+    .open-link {
+      min-height: 32px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-pill);
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background-color 160ms ease-out, border-color 160ms ease-out;
+    }
+
+    button { padding: 5px 12px; }
+    button:hover:not(:disabled), .open-link:hover { background: var(--surface); }
+    button:active:not(:disabled), .open-link:active { background: var(--surface-hover); }
+
+    button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+
+    button.primary:hover:not(:disabled) { background: var(--blue-hover); }
+
+    button:disabled,
+    input:disabled {
+      opacity: .55;
+      cursor: wait;
+    }
+
+    button:focus-visible,
+    .open-link:focus-visible,
+    input:focus-visible {
+      outline: none;
+      box-shadow: var(--focus);
+    }
+
+    .status {
+      min-height: 20px;
+      margin-top: 6px;
+      color: var(--danger);
+    }
+
+    .status button {
+      min-height: 24px;
+      margin-left: var(--space-1);
+      padding: 1px 8px;
+      color: var(--text);
+    }
+
+    .settings label {
+      min-height: 32px;
+      cursor: pointer;
+    }
+
+    .settings input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--blue);
+    }
+
+    #list {
+      max-height: 330px;
+      overflow: auto;
+      scrollbar-color: var(--line) var(--bg);
+    }
+
+    .item {
+      padding: 11px var(--space-4);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .item-head {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--space-2);
+    }
+
+    .rank {
+      color: var(--blue);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .snippet {
+      display: -webkit-box;
+      margin: var(--space-1) 0 var(--space-2);
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow-wrap: anywhere;
+    }
+
+    .item-footer,
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .item-footer { justify-content: space-between; }
+
+    .actions button,
+    .open-link {
+      min-height: 28px;
+      padding: 3px 9px;
+      font-size: 12px;
+    }
+
+    .open-link {
+      border-color: transparent;
+      color: var(--muted);
+      line-height: 20px;
+      text-decoration: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      button, .open-link { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Bookmark Injector</h1>
+    <div class="muted">Turn the backlog into your feed.</div>
+  </header>
+  <section class="controls" aria-labelledby="progress-heading">
+    <div class="row">
+      <div>
+        <div class="count" id="progress-heading"><span id="left">—</span> <small>left of <span id="total">—</span></small></div>
+        <div id="lastSync" class="muted">Never synced</div>
+      </div>
+      <button id="sync" class="primary" type="button">Sync now</button>
+    </div>
+    <div id="error" class="status" role="status" aria-live="polite" hidden></div>
+  </section>
+  <section class="settings" aria-label="Delete settings">
+    <label class="row">
+      <span>Confirm before real X delete</span>
+      <input id="confirmDelete" type="checkbox" aria-label="Confirm before deleting bookmarks from X" />
+    </label>
+  </section>
+  <main id="list" aria-label="Cached bookmarks" aria-busy="true">
+    <div class="item muted">Loading…</div>
+  </main>
   <script src="popup.js"></script>
-</body></html>
+</body>
+</html>
