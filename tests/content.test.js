@@ -286,6 +286,33 @@ describe('bookmark card injection', () => {
     expect(storageGet).toHaveBeenCalledOnce();
   });
 
+  it('shows a status card only when a non-empty cached backlog is fully done', async () => {
+    const state = {
+      ...TEST_STATE,
+      cleared: { '1806': { action: 'done', at: '2026-07-11T00:00:00.000Z' } },
+    };
+    const fixture = await loadContent({ storageGet: vi.fn().mockResolvedValue(state) });
+    const card = fixture.document.getElementById('xbi-card');
+
+    expect(fixture.timeline.children[0]).toBe(card);
+    expect(card.findAll('strong')[0].textContent).toBe('Backlog cleared ✓');
+    expect(card.findAll('div')[0].textContent).toBe('No saved bookmarks left to resurface.');
+    expect(card.findAll('button')).toHaveLength(0);
+  });
+
+  it.each([
+    ['an empty cache', { ...TEST_STATE, bookmarks: {}, meta: { ...TEST_STATE.meta, total: 0 } }],
+    ['a sync/login error with no cache', {
+      ...TEST_STATE,
+      bookmarks: {},
+      meta: { ...TEST_STATE.meta, total: 0, syncStatus: 'error', syncError: 'X session auth not captured; reload x.com' },
+    }],
+  ])('does not inject feed status for %s', async (_label, state) => {
+    const fixture = await loadContent({ storageGet: vi.fn().mockResolvedValue(state) });
+
+    expect(fixture.document.getElementById('xbi-card')).toBeNull();
+  });
+
   it('deduplicates and restores first position after mutations and timeline replacement', async () => {
     const fixture = await loadContent();
     const card = fixture.document.getElementById('xbi-card');

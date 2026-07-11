@@ -10,7 +10,7 @@ import {
 } from './bridge.js';
 import { CARD_ID, SEL, isHome } from './selectors.js';
 import { loadState } from './storage.js';
-import { buildCardElement } from './ui/card.js';
+import { buildCardElement, buildStatusCard } from './ui/card.js';
 
 let latestAuth = {
   bearer: null,
@@ -200,6 +200,14 @@ async function pinRandomCard() {
         cooldownHours: state.settings.keepCooldownHours,
       });
       if (!bookmark) {
+        if (Object.keys(state.bookmarks).length > 0
+          && countLeft(state.bookmarks, state.cleared) === 0) {
+          currentCard = buildStatusCard(
+            'Backlog cleared ✓',
+            'No saved bookmarks left to resurface.',
+          );
+          if (isHome()) positionCard();
+        }
         visitCompleted = true;
         return;
       }

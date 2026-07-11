@@ -7,7 +7,7 @@ export const SEL = {
 };
 export const CARD_ID = 'xbi-card';
 export function isForYouLabel(label) {
-  return label?.trim().toLowerCase() === 'for you';
+  return typeof label === 'string' && label.trim().toLowerCase() === 'for you';
 }
 
 export function isHome() {

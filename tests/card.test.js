@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { normalizeTweet } from '../src/core/normalize.js';
-import { formatCardMeta, buildCardElement } from '../src/ui/card.js';
+import { buildCardElement, buildStatusCard, formatCardMeta } from '../src/ui/card.js';
 
 class FakeElement {
   constructor(tagName) {
@@ -89,6 +89,19 @@ describe('formatCardMeta', () => {
   it('states when the posted time is unavailable', () => {
     expect(formatCardMeta({ saveRank: 4 }, 9, 6).posted).toBe('Posted time unavailable');
     expect(formatCardMeta({ saveRank: 4, createdAt: 'not-a-date' }, 9, 6).posted).toBe('Posted time unavailable');
+  });
+});
+
+describe('buildStatusCard', () => {
+  it('builds a text-only feed status without treating data as markup', () => {
+    installDom();
+
+    const card = buildStatusCard('Backlog cleared ✓', 'No saved bookmarks left to resurface.');
+
+    expect(card.tagName).toBe('ARTICLE');
+    expect(card.id).toBe('xbi-card');
+    expect(card.findAll('strong')[0].textContent).toBe('Backlog cleared ✓');
+    expect(card.findAll('div')[0].textContent).toBe('No saved bookmarks left to resurface.');
   });
 });
 
