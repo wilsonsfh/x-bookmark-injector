@@ -181,6 +181,22 @@ describe('buildCardElement', () => {
     expect(contrastRatio(insetFocus, accentFill)).toBeGreaterThanOrEqual(4.5);
   });
 
+  it('restores a system-color outline for primary focus in forced colors', () => {
+    installDom();
+    const card = buildCardElement(
+      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me' },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const css = card.findAll('style')[0].textContent;
+    const forcedColors = css.match(/@media \(forced-colors: active\) \{([\s\S]*?)\n\}/)?.[1];
+
+    expect(forcedColors).toContain('.xbi-action-primary:focus-visible');
+    expect(forcedColors).toContain('outline: 2px solid Highlight');
+    expect(forcedColors).toContain('outline-offset: 2px');
+    expect(forcedColors).toContain('box-shadow: none');
+  });
+
   it('locks both actions while one request is pending and ignores duplicate clicks', async () => {
     installDom();
     let resolveAction;

@@ -114,6 +114,13 @@ const CARD_CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   #${CARD_ID} .xbi-action { transition: none; }
+}
+@media (forced-colors: active) {
+  #${CARD_ID} .xbi-action-primary:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
 }`;
 
 function ordinal(n) {
