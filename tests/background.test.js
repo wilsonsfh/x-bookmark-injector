@@ -541,7 +541,9 @@ describe('service-worker bookmark actions', () => {
     const result = await background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
 
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining(error) });
-    if (response?.status >= 400) {
+    if (response?.status >= 400
+      && response.status < 500
+      && ![408, 409, 425, 429].includes(response.status)) {
       expect(background.getState().cleared).toEqual({});
       expect(background.getState().pendingActions).toEqual({});
     } else {
@@ -619,7 +621,7 @@ describe('service-worker bookmark actions', () => {
 
   it('clears the prepared intent when X rejects the delete', async () => {
     const background = await loadOperationalBackground({
-      pageRequest: vi.fn().mockResolvedValue({ ok: false, status: 503, error: 'delete failed' }),
+      pageRequest: vi.fn().mockResolvedValue({ ok: false, status: 422, error: 'delete failed' }),
     });
 
     await expect(background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
@@ -688,6 +690,37 @@ describe('service-worker bookmark actions', () => {
       bookmark: OPERATIONAL_STATE.bookmarks.old,
     });
   });
+
+  it.each([0, 408, 409, 425, 429, 500, 503])(
+    'retains bounded reconciliation for ambiguous or retryable HTTP status %s',
+    async (status) => {
+      const background = await loadOperationalBackground({
+        pageRequest: vi.fn().mockResolvedValue({ ok: false, status, error: `status ${status}` }),
+      });
+
+      await expect(background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
+        .resolves.toMatchObject({ ok: false, status });
+      expect(background.getState().pendingActions.old).toMatchObject({
+        phase: 'reconciliation',
+        undoUntil: expect.any(Number),
+      });
+      expect(background.getSession().pendingUndo.old).toMatchObject({ undoUntil: expect.any(Number) });
+    },
+  );
+
+  it.each([400, 401, 403, 404, 410, 422])(
+    'clears intent for definite non-retryable HTTP rejection %s',
+    async (status) => {
+      const background = await loadOperationalBackground({
+        pageRequest: vi.fn().mockResolvedValue({ ok: false, status, error: `status ${status}` }),
+      });
+
+      await expect(background.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
+        .resolves.toMatchObject({ ok: false, status });
+      expect(background.getState().pendingActions).toEqual({});
+      expect(background.getSession()).toEqual({});
+    },
+  );
 
   it('restores an unexpired Undo authorization after a service-worker restart', async () => {
     vi.useFakeTimers();
@@ -873,10 +906,19 @@ describe('service-worker bookmark actions', () => {
       stores,
     });
 
-    await expect(firstWorker.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' }))
-      .resolves.toMatchObject({ ok: false, error: 'session storage failed' });
-    expect(stores.local.pendingActions.old.phase).toBe('prepared');
-    expect(stores.local.cleared).toEqual({});
+    const result = await firstWorker.invoke({ type: 'XBI_ACTION', action: 'done', tweetId: 'old' });
+    expect(result).toEqual({
+      ok: true,
+      recovery: true,
+      undoUntil: Date.now() + 6_000,
+      warning: 'Bookmark removed; session recovery persisted locally',
+    });
+    expect(stores.session).toEqual({});
+    expect(stores.local.pendingActions.old).toMatchObject({
+      phase: 'reconciliation',
+      undoUntil: result.undoUntil,
+    });
+    expect(stores.local.cleared.old).toMatchObject({ action: 'done', reconciliation: true });
 
     vi.resetModules();
     const restartedWorker = await loadOperationalBackground({ pageRequest, stores });

@@ -178,6 +178,7 @@ async function loadContent(options = {}) {
   const location = { pathname: '/home' };
   const storageGet = options.storageGet ?? vi.fn().mockResolvedValue(TEST_STATE);
   const sendMessage = options.sendMessage ?? vi.fn().mockResolvedValue({ ok: true });
+  const getProjectedState = options.getProjectedState ?? vi.fn().mockResolvedValue({ pendingUndo: {} });
   const confirm = options.confirm ?? vi.fn().mockReturnValue(true);
   let mutationCallback;
   let observerOptions;
@@ -201,7 +202,9 @@ async function loadContent(options = {}) {
   vi.stubGlobal('document', fixture.document);
   vi.stubGlobal('location', location);
   const runtime = {
-    sendMessage,
+    sendMessage: vi.fn((message) => (
+      message.type === 'XBI_GET_STATE' ? getProjectedState(message) : sendMessage(message)
+    )),
     onMessage: {
       addListener: vi.fn((listener) => { runtimeMessageCallback = listener; }),
     },
@@ -265,6 +268,7 @@ async function loadContent(options = {}) {
     pageWindow,
     pageMessage: (data, source = pageWindow) => windowMessageCallback({ data, source }),
     sendMessage,
+    getProjectedState,
     storageGet,
     storageChanged: async (changes, area = 'local') => {
       storageChangedCallback(changes, area);
@@ -559,6 +563,47 @@ describe('bookmark card injection', () => {
     expect(fixture.document.getElementById('xbi-card')).toBeNull();
     const undo = fixture.document.getElementById('xbi-undo').findAll('button')[0];
     expect(undo).toBeDefined();
+    expect(fixture.document.activeElement).toBe(undo);
+  });
+
+  it('renders, focuses, and invokes projected Undo after a service-worker restart', async () => {
+    const undoUntil = Date.now() + 6_000;
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true });
+    const getProjectedState = vi.fn().mockResolvedValue({
+      pendingUndo: { '1806': { undoUntil, recovery: true } },
+    });
+    const fixture = await loadContent({ sendMessage, getProjectedState });
+
+    const toast = fixture.document.getElementById('xbi-undo');
+    const undo = toast.findAll('button')[0];
+    expect(undo).toBeDefined();
+    expect(fixture.document.activeElement).toBe(undo);
+
+    await undo.eventListeners.get('click')();
+
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'XBI_ACTION', action: 'undo', tweetId: '1806' });
+    expect(toast.textContent).toBe('Bookmark restored');
+  });
+
+  it('queries projected Undo again when returning Home', async () => {
+    const undoUntil = Date.now() + 6_000;
+    let stateReads = 0;
+    const getProjectedState = vi.fn(async () => {
+      stateReads += 1;
+      return stateReads === 1
+        ? { pendingUndo: {} }
+        : { pendingUndo: { '1806': { undoUntil, recovery: true } } };
+    });
+    const fixture = await loadContent({ getProjectedState });
+    expect(fixture.document.getElementById('xbi-undo')).toBeNull();
+
+    fixture.location.pathname = '/profile';
+    await fixture.interval();
+    fixture.location.pathname = '/home';
+    await fixture.interval();
+
+    expect(stateReads).toBe(2);
+    const undo = fixture.document.getElementById('xbi-undo').findAll('button')[0];
     expect(fixture.document.activeElement).toBe(undo);
   });
 

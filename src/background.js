@@ -13,6 +13,7 @@ import {
 
 const PERSISTED_OPERATIONS = Object.values(OPERATIONS);
 const PENDING_UNDO_KEY = 'pendingUndo';
+const UNCERTAIN_MUTATION_STATUSES = new Set([0, 408, 409, 425, 429]);
 
 let sessionAuth = {
   bearer: null,
@@ -80,7 +81,9 @@ async function restorePendingUndo() {
     if (intent?.action !== 'delete' || !intent.bookmark || typeof intent.bookmark !== 'object') continue;
     let record = pendingUndo.get(tweetId);
     const recordIsValid = Number.isFinite(record?.undoUntil) && record.undoUntil > Date.now();
-    if (!recordIsValid && intent.phase === 'deleted' && intent.undoUntil > Date.now()) {
+    if (!recordIsValid
+      && ['deleted', 'reconciliation'].includes(intent.phase)
+      && intent.undoUntil > Date.now()) {
       record = {
         undoUntil: intent.undoUntil,
         bookmark: intent.bookmark,
@@ -349,6 +352,13 @@ async function retainReconciliation(tweetId, intent) {
   return record;
 }
 
+function isDefiniteMutationRejection(status) {
+  return Number.isInteger(status)
+    && status >= 400
+    && status < 500
+    && !UNCERTAIN_MUTATION_STATUSES.has(status);
+}
+
 async function act(message, sender) {
   await pendingUndoReady;
   const at = new Date().toISOString();
@@ -405,7 +415,7 @@ async function act(message, sender) {
   try {
     payload = await pageRequest(tab.id, request);
   } catch (error) {
-    if (message.action === 'done' && error.status >= 400) {
+    if (message.action === 'done' && isDefiniteMutationRejection(error.status)) {
       await clearPendingAction(message.tweetId, deleteIntent.requestedAt);
     } else if (message.action === 'done') {
       await retainReconciliation(message.tweetId, deleteIntent);
@@ -423,7 +433,40 @@ async function act(message, sender) {
       bookmark: deleteIntent.bookmark,
       requestedAt: deleteIntent.requestedAt,
     });
-    await persistPendingUndo();
+    try {
+      await persistPendingUndo();
+    } catch {
+      const record = {
+        undoUntil: Date.now() + 6_000,
+        bookmark: deleteIntent.bookmark,
+        requestedAt: deleteIntent.requestedAt,
+        recovery: true,
+      };
+      pendingUndo.set(message.tweetId, record);
+      await updateActionState((state) => ({
+        bookmarks: { ...state.bookmarks, [message.tweetId]: deleteIntent.bookmark },
+        cleared: {
+          ...state.cleared,
+          [message.tweetId]: { action: 'done', at, reconciliation: true },
+        },
+        settings: { ...state.settings, deleteConfirmed: true },
+        pendingActions: {
+          ...state.pendingActions,
+          [message.tweetId]: {
+            ...deleteIntent,
+            phase: 'reconciliation',
+            undoUntil: record.undoUntil,
+          },
+        },
+      }));
+      scheduleUndoExpiry(message.tweetId, record);
+      return {
+        ok: true,
+        recovery: true,
+        undoUntil: record.undoUntil,
+        warning: 'Bookmark removed; session recovery persisted locally',
+      };
+    }
     try {
       await updateActionState((state) => ({
         cleared: { ...state.cleared, [message.tweetId]: { action: 'done', at } },

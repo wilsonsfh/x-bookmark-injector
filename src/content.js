@@ -141,9 +141,14 @@ function focusFeed() {
 }
 
 function showUndoToast(tweetId, undoUntil) {
-  document.getElementById('xbi-undo')?.remove();
+  const existing = document.getElementById('xbi-undo');
+  if (existing?.dataset.tweetId === tweetId
+    && Number(existing.dataset.undoUntil) === undoUntil) return;
+  existing?.remove();
   const toast = document.createElement('div');
   toast.id = 'xbi-undo';
+  toast.dataset.tweetId = tweetId;
+  toast.dataset.undoUntil = String(undoUntil);
   toast.role = 'status';
   toast.setAttribute('aria-live', 'polite');
   toast.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;background:#1d9bf0;color:white;padding:10px 14px;border-radius:999px;font:700 14px system-ui;box-shadow:0 8px 30px #0008';
@@ -184,6 +189,19 @@ function showUndoToast(tweetId, undoUntil) {
     toast.remove();
     focusFeed();
   }, Math.max(0, undoUntil - Date.now()));
+}
+
+async function recoverPendingUndo() {
+  if (!isHome()) return;
+  try {
+    const state = await chrome.runtime.sendMessage({ type: 'XBI_GET_STATE' });
+    const recovered = Object.entries(
+      state?.pendingUndo && typeof state.pendingUndo === 'object' ? state.pendingUndo : {},
+    ).find(([, record]) => Number.isFinite(record?.undoUntil) && record.undoUntil > Date.now());
+    if (recovered) showUndoToast(recovered[0], recovered[1].undoUntil);
+  } catch {
+    // The next Home visit can retry without disturbing the feed.
+  }
 }
 
 async function maybeSync() {
@@ -321,10 +339,12 @@ setInterval(() => {
     loadInFlight = false;
     visitCompleted = false;
     void pinRandomCard();
+    void recoverPendingUndo();
   }
 }, 500);
 
 void pinRandomCard();
+void recoverPendingUndo();
 chrome.storage.onChanged.addListener((changes, area) => {
   const stateChanged = changes.bookmarks || changes.cleared || changes.meta;
   if (area === 'local'
