@@ -47,6 +47,29 @@ describe('X GraphQL requests', () => {
     expect(JSON.parse(capturedAuth.operationTemplates.Bookmarks.params.variables).cursor).toBe('OLD_CURSOR');
   });
 
+  it('normalizes captured headers and strips captured credentials and cookies', () => {
+    const capturedAuth = structuredClone(auth);
+    capturedAuth.operationHeaders.Bookmarks = {
+      Authorization: 'Bearer stale',
+      'X-CSRF-Token': 'stale-csrf',
+      Cookie: 'auth_token=stale',
+      'Set-Cookie': 'auth_token=stale',
+      'X-Client-Transaction-ID': 'captured-tx',
+    };
+
+    const { init } = buildBookmarksRequest(capturedAuth);
+    expect(init.headers).toMatchObject({
+      authorization: 'Bearer captured',
+      'x-csrf-token': 'csrf-token',
+      'x-client-transaction-id': 'captured-tx',
+    });
+    expect(Object.keys(init.headers).every((name) => name === name.toLowerCase())).toBe(true);
+    expect(init.headers).not.toHaveProperty('cookie');
+    expect(init.headers).not.toHaveProperty('set-cookie');
+    expect(init.headers).not.toHaveProperty('Authorization');
+    expect(init.headers).not.toHaveProperty('X-CSRF-Token');
+  });
+
   it('builds DeleteBookmark POST without changing the captured template', () => {
     const { url, init } = buildMutationRequest('DeleteBookmark', auth, '1806');
     expect(url).toBe('https://x.com/i/api/graphql/del123/DeleteBookmark');
@@ -56,6 +79,32 @@ describe('X GraphQL requests', () => {
       queryId: 'del123',
     });
     expect(auth.operationTemplates.DeleteBookmark.body.variables).toEqual({ dark_request: false });
+  });
+
+  it('builds CreateBookmark POST without changing the captured template', () => {
+    const capturedAuth = structuredClone(auth);
+    capturedAuth.operationTemplates.CreateBookmark = {
+      body: {
+        features: { captured_create: true },
+        variables: { dark_request: false, captured_variable: 'keep-me' },
+      },
+    };
+
+    const { url, init } = buildMutationRequest('CreateBookmark', capturedAuth, '1806');
+    expect(url).toBe('https://x.com/i/api/graphql/create123/CreateBookmark');
+    expect(JSON.parse(init.body)).toEqual({
+      features: { captured_create: true },
+      variables: { dark_request: false, captured_variable: 'keep-me', tweet_id: '1806' },
+      queryId: 'create123',
+    });
+    expect(capturedAuth.operationTemplates.CreateBookmark.body.variables).toEqual({
+      dark_request: false,
+      captured_variable: 'keep-me',
+    });
+  });
+
+  it.each([undefined, '', '   '])('rejects non-present tweet ID %j', (tweetId) => {
+    expect(() => buildMutationRequest('DeleteBookmark', auth, tweetId)).toThrow('Tweet ID required');
   });
 
   it('rejects incomplete auth', () => {
@@ -102,5 +151,15 @@ describe('parseBookmarks', () => {
       tweets: [{ rest_id: 'legacy-1' }],
       nextCursor: null,
     });
+  });
+
+  it('throws a sanitized integration error for GraphQL error-only payloads', () => {
+    const payload = { errors: [{ message: 'secret upstream detail' }] };
+
+    expect(() => parseBookmarks(payload)).toThrowError(new Error('X bookmarks integration response invalid'));
+  });
+
+  it('throws a sanitized integration error when the timeline is absent', () => {
+    expect(() => parseBookmarks({ data: {} })).toThrowError(new Error('X bookmarks integration response invalid'));
   });
 });

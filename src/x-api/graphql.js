@@ -1,12 +1,20 @@
 import { BOOKMARK_FEATURES, OPERATIONS, X_ORIGIN } from './constants.js';
 
+const CAPTURED_HEADER_DENYLIST = new Set(['authorization', 'x-csrf-token', 'cookie', 'set-cookie']);
+
+function capturedHeadersFor(operation, auth) {
+  return Object.fromEntries(Object.entries(auth.operationHeaders?.[operation] ?? {})
+    .map(([name, value]) => [name.toLowerCase(), value])
+    .filter(([name]) => !CAPTURED_HEADER_DENYLIST.has(name)));
+}
+
 function headersFor(operation, auth) {
   return {
     accept: '*/*',
     'content-type': 'application/json',
     'x-twitter-active-user': 'yes',
     'x-twitter-auth-type': 'OAuth2Session',
-    ...(auth.operationHeaders?.[operation] ?? {}),
+    ...capturedHeadersFor(operation, auth),
     authorization: auth.bearer,
     'x-csrf-token': auth.csrf,
   };
@@ -42,6 +50,7 @@ export function buildMutationRequest(operation, auth, tweetId) {
   if (![OPERATIONS.DELETE, OPERATIONS.CREATE].includes(operation)) {
     throw new Error(`Unsupported mutation: ${operation}`);
   }
+  if (typeof tweetId !== 'string' || !tweetId.trim()) throw new Error('Tweet ID required');
 
   const queryId = requireAuth(operation, auth);
   const templateBody = auth.operationTemplates?.[operation]?.body ?? {};
@@ -73,9 +82,13 @@ function resultFromEntry(entry) {
 }
 
 export function parseBookmarks(payload) {
-  const instructions = payload?.data?.bookmark_timeline_v2?.timeline?.instructions
-    ?? payload?.data?.bookmark_timeline?.timeline?.instructions
-    ?? [];
+  const timeline = payload?.data?.bookmark_timeline_v2?.timeline
+    ?? payload?.data?.bookmark_timeline?.timeline;
+  if (!Array.isArray(timeline?.instructions)) {
+    throw new Error('X bookmarks integration response invalid');
+  }
+
+  const instructions = timeline.instructions;
   const entries = instructions.flatMap((instruction) => instruction.entries ?? []);
   const tweets = entries.flatMap(resultFromEntry);
   const nextCursor = entries.find((entry) => entry?.content?.cursorType === 'Bottom')?.content?.value ?? null;
