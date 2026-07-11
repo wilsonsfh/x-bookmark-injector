@@ -77,10 +77,10 @@ How the extension reads/writes bookmarks using the logged-in session:
 | # | Approach | Robustness | Decision |
 |---|----------|-----------|----------|
 | **1** | **Intercept + replay.** MAIN-world script monkey-patches `fetch`/`XHR`, captures the app's Bearer, `x-csrf-token` (`ct0`), and the live `Bookmarks`/`DeleteBookmark` `queryId`; extension replays paginated reads + delete writes. | High — learns `queryId` live, survives X's frequent rotations. | ✅ **Chosen** |
-| 2 | **Hardcoded** public web Bearer + `queryId` scraped from the JS bundle. | Medium — breaks on `queryId` rotation; needs manual upkeep. | Fallback constant only |
+| 2 | **Hardcoded** public web Bearer + `queryId` scraped from the JS bundle. | Medium — breaks on `queryId` rotation; needs manual upkeep and commits auth-like material. | ✗ Rejected after security review |
 | 3 | **DOM scrape** the Bookmarks page. | Low — virtualized list, brittle, hard to paginate headlessly. | ✗ Rejected |
 
-**Chosen: #1 (intercept + replay), with #2's hardcoded Bearer as a fallback.**
+**Chosen: #1 (intercept + replay), with no committed Bearer fallback.**
 Rationale: the fragile part of X's private API is the rotating `queryId`; learning it
 from the app's own traffic makes the extension self-healing without upkeep.
 
@@ -90,24 +90,25 @@ Chromium MV3. Four cooperating units, each with one clear job:
 
 ```
 x.com page
- ├─ inpage.js   (MAIN world)     → learns how the real app authenticates
- ├─ content.js  (ISOLATED world) → owns injected card UI + timeline observer + reads/writes
+ ├─ inpage.js   (MAIN world)     → captures auth/templates + executes constrained GraphQL
+ ├─ content.js  (ISOLATED world) → bridges messages + owns card UI/timeline observer
  ├─ background.js (service worker)→ throttled sync, pagination, cache merge
  └─ popup.html/.js               → dashboard: count, sync, settings, list
         └─ chrome.storage.local  → all state (local only)
 ```
 
-- **`inpage.js` (MAIN world)** — the only job is auth discovery. Monkey-patches
+- **`inpage.js` (MAIN world)** — owns auth discovery and constrained request execution. Monkey-patches
   `window.fetch` + `XMLHttpRequest.prototype.open/setRequestHeader/send`. On any X
   GraphQL call it captures: `authorization` Bearer, `x-csrf-token`, other required
   `x-twitter-*` headers, and the operation→`queryId` map (esp. `Bookmarks`,
-  `DeleteBookmark`, `CreateBookmark` for undo). Emits via `window.postMessage`. Holds
-  no bookmark data.
-- **`content.js` (ISOLATED world)** — receives captured auth; owns a
+  `DeleteBookmark`, `CreateBookmark` for undo), plus safe request templates (feature
+  flags/body shape). It executes only validated `https://x.com/i/api/graphql/*`
+  requests so X's page-session cookies are reliable. Emits via `window.postMessage`;
+  holds no bookmark data.
+- **`content.js` (ISOLATED world)** — bridges MAIN-world messages to the extension; owns a
   `MutationObserver` on the primary column; detects the For You timeline and SPA route
   changes (`x.com/home`); builds + pins the bookmark card as the first
-  `cellInnerDiv`-styled node; wires Done/Keep. Performs GraphQL calls same-origin with
-  `credentials:"include"` (`ct0` cookie readable via `document.cookie`).
+  `cellInnerDiv`-styled node and wires Done/Keep.
 - **`background.js` (service worker)** — owns sync: paginate `Bookmarks` via cursor,
   normalize tweets, assign `saveRank`, merge into `chrome.storage.local` (dedupe on
   tweet id), throttle (default: once per day or on manual "Sync now"). Runs
@@ -118,11 +119,15 @@ x.com page
 ## 8. Data flow
 
 **Auth discovery:** `inpage.js` observes the app's own request → posts `{bearer,
-csrf, headers, queryIds}` → `content.js`/`background` cache it (session-scoped;
-`queryIds` persisted as last-known-good).
+csrf, headers, queryIds, operationTemplates}` → `content.js`/`background` cache it
+(session-scoped; only `queryIds` persisted as last-known-good). First run asks the
+owner to open Bookmarks and bookmark/unbookmark a disposable tweet once to capture
+all three operations.
 
-**Sync (background):** trigger (first run / daily / manual) → `Bookmarks` query
-paginated by `cursor` → normalize each tweet `{id, url, text, author, handle, avatar,
+**Sync (background + page executor):** trigger (first run / daily / manual) →
+background builds each request; content relays it; MAIN world executes it with the
+page session → `Bookmarks` query paginated by `cursor` → normalize each tweet `{id,
+url, text, author, handle, avatar,
 createdAt, media}` → assign `saveRank` (see §10) → merge into cache, mark items no
 longer present as removed → write `meta.lastSync`.
 
@@ -212,7 +217,7 @@ Must visually track X's current dark/light theme and not shift layout when dismi
 - **Logged out / no session** → don't inject; popup shows "Log in to X to sync".
 - **Zero bookmarks / all cleared** → empty-state card ("Backlog cleared 🎉"), no pin.
 - **`queryId` rotated** → interception relearns it on next app call; if a replay 404s,
-  invalidate cached `queryId` and wait for re-capture; fall back to hardcoded Bearer.
+  invalidate cached `queryId` and guide the owner through safe re-capture. No committed Bearer fallback.
 - **Rate limiting (429)** → exponential backoff on sync; never block the UI.
 - **SPA navigation** → observe `document.title`/URL + timeline node; re-pin only on
   For You Home, remove card when navigating away; guard against duplicate injection.
@@ -247,14 +252,14 @@ Must visually track X's current dark/light theme and not shift layout when dismi
 - **Manual E2E checklist:** load on `x.com/home` → card pins at top; Done removes from X
   (verify in real Bookmarks) + Undo restores; Keep hides for cooldown; count decrements;
   logged-out + empty states; theme switch; SPA nav in/out.
-- **Resilience probe:** simulate stale `queryId` (force 404) → confirm relearn/fallback.
+- **Resilience probe:** simulate stale `queryId` (force 404) → confirm fail-closed error + re-capture path.
 
 ## 15. Milestones (thin vertical slices)
 
 1. **M1 — Skeleton:** MV3 manifest, content script injects a static "hello" card pinned
    at top of For You; popup shell. _Verify: card appears on Home._
-2. **M2 — Auth capture:** `inpage.js` captures Bearer/`ct0`/`queryId`; log to console.
-   _Verify: real values captured on Bookmarks visit._
+2. **M2 — Auth capture:** `inpage.js` captures Bearer/`ct0`/`queryId` without logging secrets.
+   _Verify: operation names/IDs captured on initialization; persisted storage contains IDs only._
 3. **M3 — Read + cache:** background syncs bookmarks (paginate), assigns `saveRank`,
    stores. Popup shows count + list. _Verify: counts match real bookmarks._
 4. **M4 — Real card:** render a random cached bookmark (rank, timestamp, count) in the
