@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { countLeft } from '../src/core/count.js';
 
 const BOOKMARKS_CAPTURE = {
   operation: 'Bookmarks',
@@ -286,6 +287,30 @@ describe('service-worker bookmark sync', () => {
     expect(background.sendMessage.mock.calls.filter(([, message]) => message.type === 'XBI_PAGE_REQUEST')).toHaveLength(2);
   });
 
+  it('deduplicates cross-page tweet IDs before assigning contiguous ranks and totals', async () => {
+    const newestPage = bookmarkPayload(['newest', 'duplicate'], 'C2');
+    newestPage.data.bookmark_timeline_v2.timeline.instructions[0]
+      .entries[1].content.itemContent.tweet_results.result.legacy.full_text = 'newer duplicate';
+    const oldestPage = bookmarkPayload(['duplicate', 'oldest']);
+    oldestPage.data.bookmark_timeline_v2.timeline.instructions[0]
+      .entries[0].content.itemContent.tweet_results.result.legacy.full_text = 'older duplicate';
+    const pages = [newestPage, oldestPage];
+    const background = await loadOperationalBackground({
+      pageRequest: vi.fn(async () => ({ ok: true, status: 200, payload: pages.shift() })),
+    });
+
+    await expect(background.invoke({ type: 'XBI_SYNC' })).resolves.toEqual({ ok: true, total: 3 });
+
+    const state = background.getState();
+    expect(Object.keys(state.bookmarks)).toHaveLength(3);
+    expect(state.meta.total).toBe(Object.keys(state.bookmarks).length);
+    expect(state.bookmarks).toMatchObject({
+      newest: { saveRank: 3 },
+      duplicate: { text: 'newer duplicate', saveRank: 2 },
+      oldest: { saveRank: 1 },
+    });
+  });
+
   it.each([
     [{ ok: false, status: 429, error: 'rate limited' }, 'Rate limited by X; try later'],
     [undefined, 'X request failed'],
@@ -303,6 +328,22 @@ describe('service-worker bookmark sync', () => {
                   entryId: 'tweet-bad',
                   content: { itemContent: { tweet_results: { result: { legacy: {} } } } },
                 }],
+              }],
+            },
+          },
+        },
+      },
+    }, 'integration response invalid'],
+    [{
+      ok: true,
+      status: 200,
+      payload: {
+        data: {
+          bookmark_timeline_v2: {
+            timeline: {
+              instructions: [{
+                type: 'TimelineAddEntries',
+                entries: [{ entryId: 'module-bad-0', content: { items: [{}] } }],
               }],
             },
           },
@@ -549,7 +590,7 @@ describe('service-worker bookmark actions', () => {
     expect(background.set.mock.calls.filter(([patch]) => patch.cleared)).toHaveLength(1);
   });
 
-  it('orders concurrent Done then Keep and leaves the final Keep marker', async () => {
+  it('rejects queued Keep after Done and preserves the Done marker and count', async () => {
     vi.useFakeTimers();
     let resolveDelete;
     const pageRequest = vi.fn(() => new Promise((resolve) => { resolveDelete = resolve; }));
@@ -559,11 +600,15 @@ describe('service-worker bookmark actions', () => {
     const keep = background.invoke({ type: 'XBI_ACTION', action: 'keep', tweetId: 'old' });
     resolveDelete({ ok: true, status: 200, payload: { data: { tweet_bookmark_delete: 'Done' } } });
 
-    await Promise.all([done, keep]);
+    const [doneResult, keepResult] = await Promise.all([done, keep]);
 
+    expect(doneResult.ok).toBe(true);
+    expect(keepResult).toEqual({ ok: false, error: 'Bookmark is already Done', status: 0 });
     expect(pageRequest.mock.calls.map(([request]) => request.url.split('/').at(-1)))
       .toEqual(['DeleteBookmark']);
-    expect(background.getState().cleared.old.action).toBe('keep');
+    const state = background.getState();
+    expect(state.cleared.old.action).toBe('done');
+    expect(countLeft(state.bookmarks, state.cleared)).toBe(0);
   });
 
   it('orders concurrent Done then Undo as DeleteBookmark then CreateBookmark', async () => {

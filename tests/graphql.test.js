@@ -175,6 +175,15 @@ describe('parseBookmarks', () => {
               entries: [
                 { entryId: 'cursor-top-0', content: { cursorType: 'Top', value: 'TOP' } },
                 { entryId: 'module-empty-0', content: { items: [] } },
+                {
+                  entryId: 'module-cursor-0',
+                  content: {
+                    items: [{
+                      entryId: 'cursor-show-more-0',
+                      item: { itemContent: { cursorType: 'ShowMore', value: 'MORE' } },
+                    }],
+                  },
+                },
               ],
             }],
           },
@@ -194,6 +203,7 @@ describe('parseBookmarks', () => {
     [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'cursor-bottom-0', content: { cursorType: 'Bottom' } }] }] } } } }],
     [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'cursor-new-0', content: { cursorType: 'NewCursorType', value: 'CURSOR' } }] }] } } } }],
     [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'module-bad-0', content: { items: {} } }] }] } } } }],
+    [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'module-bad-child-0', content: { items: [{}] } }] }] } } } }],
     [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'tweet-1', content: { itemContent: {} } }] }] } } } }],
     [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'tweet-1', content: { itemContent: { tweet_results: {} } } }] }] } } } }],
     [{ data: { bookmark_timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [{ entryId: 'tweet-1', content: { itemContent: { tweet_results: { result: { legacy: {} } } } } }] }] } } } }],

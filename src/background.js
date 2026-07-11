@@ -78,7 +78,14 @@ function syncBookmarks(tabId) {
         const payload = await pageRequest(tabId, buildBookmarksRequest(auth, cursor));
         return parseBookmarks(payload);
       });
-      const ranked = assignSaveRank(raw.map(normalizeTweet).filter(Boolean));
+      const seenIds = new Set();
+      const normalized = raw.map(normalizeTweet).filter((bookmark) => {
+        if (!bookmark) throw new Error('X bookmarks integration response invalid');
+        if (seenIds.has(bookmark.id)) return false;
+        seenIds.add(bookmark.id);
+        return true;
+      });
+      const ranked = assignSaveRank(normalized);
       const bookmarks = mergeBookmarks(prior.bookmarks, ranked);
       await savePatch({
         bookmarks,
@@ -142,9 +149,14 @@ function updateActionState(createPatch) {
 async function act(message, sender) {
   const at = new Date().toISOString();
   if (message.action === 'keep') {
-    await updateActionState((state) => ({
-      cleared: { ...state.cleared, [message.tweetId]: { action: 'keep', at } },
-    }));
+    await updateActionState((state) => {
+      if (state.cleared[message.tweetId]?.action === 'done') {
+        throw new Error('Bookmark is already Done');
+      }
+      return {
+        cleared: { ...state.cleared, [message.tweetId]: { action: 'keep', at } },
+      };
+    });
     return { ok: true };
   }
 

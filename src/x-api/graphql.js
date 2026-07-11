@@ -94,6 +94,22 @@ function tweetFromItemContent(itemContent) {
   return tweet;
 }
 
+function parseModuleItem(item) {
+  if (!isRecord(item) || !isRecord(item.item) || !isRecord(item.item.itemContent)) {
+    throw integrationError();
+  }
+  const itemContent = item.item.itemContent;
+  if (Object.hasOwn(itemContent, 'tweet_results')) return tweetFromItemContent(itemContent);
+  if (Object.hasOwn(itemContent, 'cursorType')) {
+    if (!BOOKMARK_CURSOR_TYPES.has(itemContent.cursorType)
+      || typeof itemContent.value !== 'string' || !itemContent.value) {
+      throw integrationError();
+    }
+    return null;
+  }
+  throw integrationError();
+}
+
 function parseEntry(entry) {
   if (!isRecord(entry) || typeof entry.entryId !== 'string' || !entry.entryId
     || !isRecord(entry.content)) {
@@ -111,11 +127,8 @@ function parseEntry(entry) {
     if (!Array.isArray(content.items)) throw integrationError();
     const tweets = [];
     for (const item of content.items) {
-      if (!isRecord(item)) throw integrationError();
-      const itemContent = item.item?.itemContent;
-      const intendedTweet = item.entryId?.startsWith('tweet-')
-        || (isRecord(itemContent) && Object.hasOwn(itemContent, 'tweet_results'));
-      if (intendedTweet) tweets.push(tweetFromItemContent(itemContent));
+      const tweet = parseModuleItem(item);
+      if (tweet) tweets.push(tweet);
     }
     return { tweets, cursor: null };
   }
