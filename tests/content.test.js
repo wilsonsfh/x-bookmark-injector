@@ -156,7 +156,7 @@ async function loadContent(options = {}) {
   const location = { pathname: '/home' };
   const storageGet = options.storageGet ?? vi.fn().mockResolvedValue(TEST_STATE);
   const sendMessage = options.sendMessage ?? vi.fn().mockResolvedValue({ ok: true });
-  const confirm = vi.fn().mockReturnValue(true);
+  const confirm = options.confirm ?? vi.fn().mockReturnValue(true);
   let mutationCallback;
   let observerOptions;
   let intervalCallback;
@@ -327,6 +327,7 @@ describe('bookmark card injection', () => {
   });
 
   it('retries after building the card fails', async () => {
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0);
     const fixture = await loadContent({
       configureFixture: ({ document }) => {
         const createElement = document.createElement;
@@ -345,7 +346,8 @@ describe('bookmark card injection', () => {
     await fixture.mutate();
 
     expect(fixture.document.getElementById('xbi-card')).not.toBeNull();
-    expect(fixture.storageGet).toHaveBeenCalledTimes(2);
+    expect(fixture.storageGet).toHaveBeenCalledOnce();
+    expect(rng).toHaveBeenCalledOnce();
   });
 
   it('sends keep and confirmed done actions and dismisses the card', async () => {
@@ -385,6 +387,34 @@ describe('bookmark card injection', () => {
     expect(fixture.document.getElementById('xbi-card')).toBe(card);
     expect(status.textContent).toBe('Could not update this bookmark. Try again.');
     expect(buttons.every((button) => !button.disabled)).toBe(true);
+  });
+
+  it('does not dismiss for a truthy but malformed runtime response', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: 1 });
+    const fixture = await loadContent({ sendMessage });
+    const card = fixture.document.getElementById('xbi-card');
+    const keepButton = card.findAll('button')[0];
+    const status = card.findAll('p').find((node) => node.className === 'xbi-status');
+
+    await keepButton.eventListeners.get('click')();
+
+    expect(fixture.document.getElementById('xbi-card')).toBe(card);
+    expect(status.textContent).toBe('Could not update this bookmark. Try again.');
+  });
+
+  it('treats declined delete confirmation as explicit cancellation', async () => {
+    const confirm = vi.fn().mockReturnValue(false);
+    const fixture = await loadContent({ confirm });
+    const card = fixture.document.getElementById('xbi-card');
+    const doneButton = card.findAll('button')[1];
+    const status = card.findAll('p').find((node) => node.className === 'xbi-status');
+
+    await doneButton.eventListeners.get('click')();
+
+    expect(fixture.sendMessage).not.toHaveBeenCalled();
+    expect(fixture.document.getElementById('xbi-card')).toBe(card);
+    expect(status.hidden).toBe(true);
+    expect(status.textContent).toBe('');
   });
 
   it('does not let a stale action response dismiss the next Home visit card', async () => {

@@ -3,9 +3,7 @@ import { CARD_ID } from '../selectors.js';
 const CARD_CSS = `
 #${CARD_ID} {
   --xbi-accent: #1d9bf0;
-  --xbi-accent-text-light: #0b5f99;
-  --xbi-accent-text-dark: #8ecdf8;
-  --xbi-accent-text: var(--xbi-accent-text-light);
+  --xbi-accent-text: currentColor;
   --xbi-on-accent: #0f1419;
   --xbi-space-1: 4px;
   --xbi-space-2: 8px;
@@ -99,6 +97,7 @@ const CARD_CSS = `
 }
 #${CARD_ID} .xbi-action:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
 #${CARD_ID} .xbi-action:active { background: color-mix(in srgb, currentColor 14%, transparent); }
+#${CARD_ID} .xbi-action:disabled { opacity: .55; cursor: wait; }
 #${CARD_ID} .xbi-action-primary {
   border-color: var(--xbi-accent);
   color: var(--xbi-on-accent);
@@ -111,9 +110,6 @@ const CARD_CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   #${CARD_ID} .xbi-action { transition: none; }
-}
-@media (prefers-color-scheme: dark) {
-  #${CARD_ID} { --xbi-accent-text: var(--xbi-accent-text-dark); }
 }`;
 
 function ordinal(n) {
@@ -208,7 +204,9 @@ export function buildCardElement(bookmark, stats, handlers) {
   if (mediaUrl) {
     const image = node('img', null, 'xbi-media');
     image.src = mediaUrl;
-    image.alt = '';
+    image.alt = typeof firstMedia.alt === 'string' && firstMedia.alt.trim()
+      ? firstMedia.alt
+      : `Image from ${bookmark.author || bookmark.handle || 'this account'}'s bookmarked post`;
     image.loading = 'lazy';
     card.append(image);
   }
@@ -242,8 +240,8 @@ export function buildCardElement(bookmark, stats, handlers) {
     controls.forEach((button) => { button.disabled = true; });
     try {
       const result = await handler();
-      if (result?.ok === false) {
-        status.textContent = typeof result.error === 'string'
+      if (result?.ok !== true && result?.cancelled !== true) {
+        status.textContent = result?.ok === false && typeof result.error === 'string'
           ? result.error
           : 'Could not update this bookmark. Try again.';
         status.hidden = false;

@@ -136,13 +136,16 @@ describe('buildCardElement', () => {
     expect(css).toContain('--xbi-target-size: 36px');
     expect(css).toContain('min-height: var(--xbi-target-size)');
     expect(css).toContain(':focus-visible');
+    expect(css).toContain('.xbi-action:disabled');
+    expect(css).toContain('opacity: .55');
+    expect(css).toContain('cursor: wait');
     await buttons[0].eventListeners.get('click')();
     await buttons[1].eventListeners.get('click')();
     expect(onKeep).toHaveBeenCalledOnce();
     expect(onDone).toHaveBeenCalledOnce();
   });
 
-  it('keeps accent text at WCAG AA contrast in light, dark, and filled states', () => {
+  it('inherits X text contrast across OS and X theme mismatches', () => {
     installDom();
     const card = buildCardElement(
       { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me' },
@@ -150,15 +153,13 @@ describe('buildCardElement', () => {
       { onKeep: vi.fn(), onDone: vi.fn() },
     );
     const css = card.findAll('style')[0].textContent;
-    const lightText = cssToken(css, '--xbi-accent-text-light');
-    const darkText = cssToken(css, '--xbi-accent-text-dark');
     const accentFill = cssToken(css, '--xbi-accent');
     const onAccent = cssToken(css, '--xbi-on-accent');
 
-    expect(lightText).toMatch(/^#[\da-f]{6}$/i);
-    expect(darkText).toMatch(/^#[\da-f]{6}$/i);
-    expect(contrastRatio(lightText, '#ffffff')).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(darkText, '#000000')).toBeGreaterThanOrEqual(4.5);
+    expect(css).toContain('--xbi-accent-text: currentColor');
+    expect(css).not.toContain('@media (prefers-color-scheme: dark)');
+    expect(contrastRatio('#e7e9ea', '#000000')).toBeGreaterThanOrEqual(4.5); // OS light, X dark.
+    expect(contrastRatio('#0f1419', '#ffffff')).toBeGreaterThanOrEqual(4.5); // OS dark, X light.
     expect(contrastRatio(onAccent, accentFill)).toBeGreaterThanOrEqual(4.5);
   });
 
@@ -212,6 +213,28 @@ describe('buildCardElement', () => {
     expect(card.parentElement).toBeNull();
   });
 
+  it('fails closed on undefined and malformed action responses', async () => {
+    installDom();
+    const card = buildCardElement(
+      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me' },
+      { total: 1, left: 1 },
+      {
+        onKeep: vi.fn().mockResolvedValue(undefined),
+        onDone: vi.fn().mockResolvedValue({ unexpected: true }),
+      },
+    );
+    const buttons = card.findAll('button');
+    const status = card.findAll('p').find((node) => node.className === 'xbi-status');
+
+    await buttons[0].eventListeners.get('click')();
+    expect(status.textContent).toBe('Could not update this bookmark. Try again.');
+    expect(status.hidden).toBe(false);
+
+    await buttons[1].eventListeners.get('click')();
+    expect(status.textContent).toBe('Could not update this bookmark. Try again.');
+    expect(status.hidden).toBe(false);
+  });
+
   it('renders a visible keyboard-accessible link for a valid X post URL', () => {
     installDom();
     const card = buildCardElement(
@@ -252,5 +275,32 @@ describe('buildCardElement', () => {
     expect(trusted.findAll('a')[0].href).toBe('https://twitter.com/zara/status/1');
     expect(untrusted.findAll('a')).toHaveLength(0);
     expect(untrusted.findAll('img')).toHaveLength(0);
+  });
+
+  it('preserves media alt text and supplies an author-aware fallback', () => {
+    installDom();
+    const described = buildCardElement(
+      {
+        author: 'Zara Zhang',
+        media: [{ url: 'https://pbs.twimg.com/media.jpg', alt: 'Diagram of the bookmark workflow' }],
+        saveRank: 1,
+        text: 'Read me',
+      },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const fallback = buildCardElement(
+      {
+        author: 'Zara Zhang',
+        media: [{ url: 'https://pbs.twimg.com/media-2.jpg' }],
+        saveRank: 2,
+        text: 'Read me too',
+      },
+      { total: 2, left: 2 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+
+    expect(described.findAll('img')[0].alt).toBe('Diagram of the bookmark workflow');
+    expect(fallback.findAll('img')[0].alt).toBe("Image from Zara Zhang's bookmarked post");
   });
 });

@@ -8,6 +8,7 @@ let loadInFlight = false;
 let visitCompleted = false;
 let homeVisit = 0;
 let currentCard = null;
+let visitModel = null;
 let lastPath = location.pathname;
 let mutationFramePending = false;
 
@@ -44,15 +45,26 @@ async function pinRandomCard() {
   const visit = homeVisit;
 
   try {
-    const state = await loadState();
-    if (visit !== homeVisit) return;
-    const bookmark = pickBookmark(state.bookmarks, state.cleared, {
-      cooldownHours: state.settings.keepCooldownHours,
-    });
-    if (!bookmark) {
-      visitCompleted = true;
-      return;
+    if (!visitModel) {
+      const state = await loadState();
+      if (visit !== homeVisit) return;
+      const bookmark = pickBookmark(state.bookmarks, state.cleared, {
+        cooldownHours: state.settings.keepCooldownHours,
+      });
+      if (!bookmark) {
+        visitCompleted = true;
+        return;
+      }
+      visitModel = {
+        bookmark,
+        settings: state.settings,
+        stats: {
+          total: Object.keys(state.bookmarks).length,
+          left: countLeft(state.bookmarks, state.cleared),
+        },
+      };
     }
+    const { bookmark, settings, stats } = visitModel;
 
     let card;
     const dismiss = () => {
@@ -66,21 +78,18 @@ async function pinRandomCard() {
         action,
         tweetId: bookmark.id,
       });
-      if (result?.ok) dismiss();
+      if (result?.ok === true) dismiss();
       return result;
     };
     card = buildCardElement(
       bookmark,
-      {
-        total: Object.keys(state.bookmarks).length,
-        left: countLeft(state.bookmarks, state.cleared),
-      },
+      stats,
       {
         onKeep: () => runAction('keep'),
         onDone: async () => {
-          if (state.settings.confirmRealDelete && !state.settings.deleteConfirmed) {
+          if (settings.confirmRealDelete && !settings.deleteConfirmed) {
             const approved = window.confirm('Remove this bookmark from X for real? You will have 6 seconds to Undo.');
-            if (!approved) return;
+            if (!approved) return { cancelled: true };
           }
           return runAction('done');
         },
@@ -120,6 +129,7 @@ setInterval(() => {
     homeVisit += 1;
     removeCard();
     currentCard = null;
+    visitModel = null;
     loadInFlight = false;
     visitCompleted = false;
     void pinRandomCard();
