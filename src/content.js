@@ -201,7 +201,9 @@ async function pinRandomCard() {
       });
       if (!bookmark) {
         if (Object.keys(state.bookmarks).length > 0
-          && countLeft(state.bookmarks, state.cleared) === 0) {
+          && countLeft(state.bookmarks, state.cleared) === 0
+          && state.meta.syncStatus !== 'error'
+          && state.meta.syncError == null) {
           currentCard = buildStatusCard(
             'Backlog cleared ✓',
             'No saved bookmarks left to resurface.',
@@ -304,6 +306,18 @@ setInterval(() => {
 
 void pinRandomCard();
 chrome.storage.onChanged.addListener((changes, area) => {
+  const stateChanged = changes.bookmarks || changes.cleared || changes.meta;
+  if (area === 'local'
+    && stateChanged
+    && currentCard?.dataset.xbiKind === 'completion-status') {
+    removeCard();
+    currentCard = null;
+    visitModel = null;
+    stateLoadInFlight = null;
+    visitCompleted = false;
+    void pinRandomCard();
+    return;
+  }
   if (area === 'local' && changes.bookmarks && !visitModel) {
     visitCompleted = false;
     void pinRandomCard();

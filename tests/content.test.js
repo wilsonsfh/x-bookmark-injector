@@ -300,6 +300,21 @@ describe('bookmark card injection', () => {
     expect(card.findAll('button')).toHaveLength(0);
   });
 
+  it('does not show completion when an all-Done cache has a sync error', async () => {
+    const state = {
+      ...TEST_STATE,
+      cleared: { '1806': { action: 'done', at: '2026-07-11T00:00:00.000Z' } },
+      meta: {
+        ...TEST_STATE.meta,
+        syncStatus: 'error',
+        syncError: 'X session auth not captured; reload x.com',
+      },
+    };
+    const fixture = await loadContent({ storageGet: vi.fn().mockResolvedValue(state) });
+
+    expect(fixture.document.getElementById('xbi-card')).toBeNull();
+  });
+
   it.each([
     ['an empty cache', { ...TEST_STATE, bookmarks: {}, meta: { ...TEST_STATE.meta, total: 0 } }],
     ['a sync/login error with no cache', {
@@ -556,6 +571,63 @@ describe('bookmark card injection', () => {
     await fixture.storageChanged({ bookmarks: { oldValue: {}, newValue: TEST_STATE.bookmarks } });
 
     expect(fixture.document.getElementById('xbi-card')).not.toBeNull();
+  });
+
+  it('replaces completion status with an eligible bookmark after a successful sync', async () => {
+    const completed = {
+      ...TEST_STATE,
+      cleared: { '1806': { action: 'done', at: '2026-07-11T00:00:00.000Z' } },
+    };
+    const storageGet = vi.fn()
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValue(TEST_STATE);
+    const fixture = await loadContent({ storageGet });
+    const statusCard = fixture.document.getElementById('xbi-card');
+
+    await fixture.storageChanged({
+      bookmarks: { oldValue: completed.bookmarks, newValue: TEST_STATE.bookmarks },
+      meta: { oldValue: completed.meta, newValue: TEST_STATE.meta },
+    });
+
+    const bookmarkCard = fixture.document.getElementById('xbi-card');
+    expect(bookmarkCard).not.toBe(statusCard);
+    expect(bookmarkCard.findAll('strong').some((node) => node.textContent === 'Zara Zhang')).toBe(true);
+    expect(storageGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('replaces completion status with the restored bookmark after Undo updates cleared state', async () => {
+    const completed = {
+      ...TEST_STATE,
+      cleared: { '1806': { action: 'done', at: '2026-07-11T00:00:00.000Z' } },
+    };
+    const storageGet = vi.fn()
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValue(TEST_STATE);
+    const fixture = await loadContent({ storageGet });
+    const statusCard = fixture.document.getElementById('xbi-card');
+
+    await fixture.storageChanged({
+      cleared: { oldValue: completed.cleared, newValue: TEST_STATE.cleared },
+    });
+
+    const bookmarkCard = fixture.document.getElementById('xbi-card');
+    expect(bookmarkCard).not.toBe(statusCard);
+    expect(bookmarkCard.findAll('strong').some((node) => node.textContent === 'Zara Zhang')).toBe(true);
+    expect(storageGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves an ordinary random card across storage publications in the same visit', async () => {
+    const fixture = await loadContent();
+    const card = fixture.document.getElementById('xbi-card');
+
+    await fixture.storageChanged({
+      bookmarks: { oldValue: TEST_STATE.bookmarks, newValue: TEST_STATE.bookmarks },
+      cleared: { oldValue: TEST_STATE.cleared, newValue: TEST_STATE.cleared },
+      meta: { oldValue: TEST_STATE.meta, newValue: TEST_STATE.meta },
+    });
+
+    expect(fixture.document.getElementById('xbi-card')).toBe(card);
+    expect(fixture.storageGet).toHaveBeenCalledOnce();
   });
 
   it('treats declined delete confirmation as explicit cancellation', async () => {

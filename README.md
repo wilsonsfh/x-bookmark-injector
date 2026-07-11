@@ -34,6 +34,7 @@ Repeat these steps if X rotates operation IDs or the popup reports missing captu
 
 - **Keep for later:** records a local 72-hour cooldown. The bookmark remains saved on X and still counts as left. If every remaining item is cooling down, one may be resurfaced rather than leaving the feed empty.
 - **Done:** after the configured one-time confirmation, calls X's delete-bookmark mutation. Local Done state changes only after X reports success. A six-second Undo calls X's create-bookmark mutation and restores local state after X reports success.
+- **Backlog cleared:** appears only when a non-empty cached backlog is fully Done and sync metadata has no error. Bookmark, Done/Undo, and sync metadata changes re-evaluate this status; login and sync failures remain popup-only.
 
 ## Local data and session boundaries
 

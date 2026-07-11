@@ -19,7 +19,7 @@ Every item is intentionally unchecked. Automated evidence belongs in `.superpowe
 - [ ] Undo within six seconds re-creates the X bookmark and restores local state.
 - [ ] A failed delete leaves the card and local state unchanged and shows an actionable error.
 - [ ] A failed, partial, malformed, or HTTP 429 sync retains the prior cache and reports a useful popup error.
-- [ ] A non-empty cached backlog with every item Done shows `Backlog cleared ✓` only on For You.
+- [ ] A non-empty cached backlog with every item Done and no sync error shows `Backlog cleared ✓` only on For You, then refreshes after sync or Undo state changes.
 - [ ] Dark and light X themes remain readable; media and text do not overflow at narrow width; keyboard focus and reduced-motion behavior work.
 - [ ] `chrome.storage.local` contains no Bearer, CSRF, cookie, replay header, operation template, or telemetry data.
 - [ ] README first-run instructions work on a fresh extension profile.

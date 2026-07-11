@@ -100,6 +100,7 @@ describe('buildStatusCard', () => {
 
     expect(card.tagName).toBe('ARTICLE');
     expect(card.id).toBe('xbi-card');
+    expect(card.dataset.xbiKind).toBe('completion-status');
     expect(card.findAll('strong')[0].textContent).toBe('Backlog cleared ✓');
     expect(card.findAll('div')[0].textContent).toBe('No saved bookmarks left to resurface.');
   });

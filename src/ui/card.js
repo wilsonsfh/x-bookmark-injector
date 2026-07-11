@@ -172,6 +172,7 @@ export function buildStatusCard(title, detail) {
   const card = node('article');
   const detailElement = node('div', detail);
   card.id = CARD_ID;
+  card.dataset.xbiKind = 'completion-status';
   card.style.cssText = 'padding:14px 16px;border-bottom:1px solid color-mix(in srgb,currentColor 18%,transparent);border-left:3px solid #00ba7c;color:inherit;font:15px/1.4 system-ui';
   detailElement.style.cssText = 'opacity:.7;margin-top:3px';
   card.append(node('strong', title), detailElement);
