@@ -70,6 +70,7 @@ function showUndoExpired(session) {
 }
 
 function showUndo(tweetId, undoUntil) {
+  if (activeUndo?.tweetId === tweetId && activeUndo.undoUntil === undoUntil) return;
   const version = ++noticeVersion;
   const notice = $('undoNotice');
   const undo = document.createElement('button');
@@ -298,6 +299,10 @@ function commitState(state) {
       ? bookmarks.map(bookmarkRow)
       : [emptyRow(emptyMessage)]));
   }
+  const recoveredUndo = Object.entries(
+    state.pendingUndo && typeof state.pendingUndo === 'object' ? state.pendingUndo : {},
+  ).find(([, record]) => Number.isFinite(record?.undoUntil) && record.undoUntil > Date.now());
+  if (recoveredUndo) showUndo(recoveredUndo[0], recoveredUndo[1].undoUntil);
 }
 
 function commitLoadError(error) {

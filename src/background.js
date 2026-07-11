@@ -25,6 +25,7 @@ let persistQueue = Promise.resolve();
 let actionStateQueue = Promise.resolve();
 let syncInFlight = null;
 const pendingUndo = new Map();
+const undoExpiryTimers = new Map();
 const actionsInFlight = new Map();
 
 async function persistPendingUndo() {
@@ -34,6 +35,28 @@ async function persistPendingUndo() {
     return;
   }
   await chrome.storage.session?.set({ [PENDING_UNDO_KEY]: records });
+}
+
+function scheduleUndoExpiry(tweetId, record) {
+  clearTimeout(undoExpiryTimers.get(tweetId)?.timer);
+  const timer = setTimeout(() => {
+    const current = pendingUndo.get(tweetId);
+    if (current?.undoUntil !== record.undoUntil || current?.requestedAt !== record.requestedAt) return;
+    pendingUndo.delete(tweetId);
+    undoExpiryTimers.delete(tweetId);
+    void persistPendingUndo();
+    void clearPendingAction(tweetId, record.requestedAt);
+  }, Math.max(0, record.undoUntil - Date.now()));
+  undoExpiryTimers.set(tweetId, { timer, requestedAt: record.requestedAt });
+}
+
+function pendingUndoProjection() {
+  return Object.fromEntries([...pendingUndo.entries()]
+    .filter(([, record]) => Number.isFinite(record.undoUntil) && record.undoUntil > Date.now())
+    .map(([tweetId, record]) => [tweetId, {
+      undoUntil: record.undoUntil,
+      recovery: record.recovery === true,
+    }]));
 }
 
 async function restorePendingUndo() {
@@ -56,15 +79,28 @@ async function restorePendingUndo() {
   for (const [tweetId, intent] of Object.entries(state.pendingActions)) {
     if (intent?.action !== 'delete' || !intent.bookmark || typeof intent.bookmark !== 'object') continue;
     let record = pendingUndo.get(tweetId);
-    if (!record && intent.phase === 'deleted' && intent.undoUntil > Date.now()) {
-      record = { undoUntil: intent.undoUntil, bookmark: intent.bookmark };
+    const recordIsValid = Number.isFinite(record?.undoUntil) && record.undoUntil > Date.now();
+    if (!recordIsValid && intent.phase === 'deleted' && intent.undoUntil > Date.now()) {
+      record = {
+        undoUntil: intent.undoUntil,
+        bookmark: intent.bookmark,
+        requestedAt: intent.requestedAt,
+      };
       pendingUndo.set(tweetId, record);
     }
+    if (record && record.requestedAt !== intent.requestedAt) {
+      record = { ...record, requestedAt: intent.requestedAt };
+      pendingUndo.set(tweetId, record);
+    }
+    const recoveredRecordIsValid = Number.isFinite(record?.undoUntil) && record.undoUntil > Date.now();
     if (intent.phase === 'prepared'
-      || intent.phase === 'reconciliation'
-      || (intent.phase === 'deleted' && (!record || record.recovery === true))) {
+      || (intent.phase === 'deleted' && !recoveredRecordIsValid && intent.recovery === true)) {
       if (!Number.isFinite(record?.undoUntil) || record.undoUntil <= Date.now()) {
-        record = { undoUntil: Date.now() + 6_000, bookmark: intent.bookmark };
+        record = {
+          undoUntil: Date.now() + 6_000,
+          bookmark: intent.bookmark,
+          requestedAt: intent.requestedAt,
+        };
       }
       pendingUndo.set(tweetId, record);
       pendingActions[tweetId] = {
@@ -79,16 +115,34 @@ async function restorePendingUndo() {
         reconciliation: true,
       };
       localChanged = true;
-    } else if (!record && intent.phase === 'deleted') {
+    } else if (intent.phase === 'reconciliation' && !recoveredRecordIsValid) {
+      pendingUndo.delete(tweetId);
+      delete pendingActions[tweetId];
+      localChanged = true;
+    } else if (!recoveredRecordIsValid && intent.phase === 'deleted') {
+      pendingUndo.delete(tweetId);
       delete pendingActions[tweetId];
       localChanged = true;
     }
   }
   await persistPendingUndo();
   if (localChanged) await savePatch({ bookmarks, cleared, pendingActions });
+  for (const [tweetId, record] of pendingUndo) {
+    if (Number.isFinite(record.undoUntil) && record.undoUntil > Date.now()) {
+      scheduleUndoExpiry(tweetId, record);
+    }
+  }
 }
 
 const pendingUndoReady = restorePendingUndo();
+
+async function loadProjectedState() {
+  await pendingUndoReady;
+  return {
+    ...await loadState(),
+    pendingUndo: pendingUndoProjection(),
+  };
+}
 
 async function xTab(sender) {
   if (Number.isInteger(sender.tab?.id)) return sender.tab;
@@ -227,7 +281,8 @@ function updateActionState(createPatch) {
     .catch(() => {})
     .then(async () => {
       const state = await loadState();
-      await savePatch(createPatch(state));
+      const patch = createPatch(state);
+      if (patch) await savePatch(patch);
     });
   actionStateQueue = update;
   return update;
@@ -249,12 +304,49 @@ function updateSettings(patch) {
   );
 }
 
-function clearPendingAction(tweetId) {
+function clearPendingAction(tweetId, expectedRequestedAt) {
   return updateActionState((state) => {
+    if (expectedRequestedAt !== undefined
+      && state.pendingActions[tweetId]?.requestedAt !== expectedRequestedAt) return null;
     const pendingActions = { ...state.pendingActions };
     delete pendingActions[tweetId];
     return { pendingActions };
   });
+}
+
+async function retainReconciliation(tweetId, intent) {
+  const record = {
+    undoUntil: Date.now() + 6_000,
+    bookmark: intent.bookmark,
+    requestedAt: intent.requestedAt,
+    recovery: true,
+  };
+  pendingUndo.set(tweetId, record);
+  await persistPendingUndo();
+  try {
+    await updateActionState((state) => {
+      if (state.pendingActions[tweetId]?.requestedAt !== intent.requestedAt) return null;
+      return {
+        bookmarks: { ...state.bookmarks, [tweetId]: intent.bookmark },
+        cleared: {
+          ...state.cleared,
+          [tweetId]: { action: 'done', at: intent.requestedAt, reconciliation: true },
+        },
+        pendingActions: {
+          ...state.pendingActions,
+          [tweetId]: {
+            ...intent,
+            phase: 'reconciliation',
+            undoUntil: record.undoUntil,
+          },
+        },
+      };
+    });
+  } catch {
+    // The prepared intent remains durable and startup recovery can project this record.
+  }
+  scheduleUndoExpiry(tweetId, record);
+  return record;
 }
 
 async function act(message, sender) {
@@ -298,22 +390,39 @@ async function act(message, sender) {
     });
   }
 
-  const tab = await xTab(sender);
-  const auth = await authFor(tab.id);
   const operation = message.action === 'done' ? OPERATIONS.DELETE : OPERATIONS.CREATE;
+  let tab;
+  let request;
+  try {
+    tab = await xTab(sender);
+    const auth = await authFor(tab.id);
+    request = buildMutationRequest(operation, auth, message.tweetId);
+  } catch (error) {
+    if (message.action === 'done') await clearPendingAction(message.tweetId, deleteIntent.requestedAt);
+    throw error;
+  }
   let payload;
   try {
-    payload = await pageRequest(tab.id, buildMutationRequest(operation, auth, message.tweetId));
+    payload = await pageRequest(tab.id, request);
   } catch (error) {
     if (message.action === 'done' && error.status >= 400) {
-      await clearPendingAction(message.tweetId);
+      await clearPendingAction(message.tweetId, deleteIntent.requestedAt);
+    } else if (message.action === 'done') {
+      await retainReconciliation(message.tweetId, deleteIntent);
     }
     throw error;
   }
-  if (!mutationSucceeded(operation, payload)) throw new Error('X mutation response invalid');
+  if (!mutationSucceeded(operation, payload)) {
+    if (message.action === 'done') await retainReconciliation(message.tweetId, deleteIntent);
+    throw new Error('X mutation response invalid');
+  }
 
   if (message.action === 'done') {
-    pendingUndo.set(message.tweetId, { recovery: true, bookmark: deleteIntent.bookmark });
+    pendingUndo.set(message.tweetId, {
+      recovery: true,
+      bookmark: deleteIntent.bookmark,
+      requestedAt: deleteIntent.requestedAt,
+    });
     await persistPendingUndo();
     try {
       await updateActionState((state) => ({
@@ -329,15 +438,27 @@ async function act(message, sender) {
         },
       }));
     } catch (error) {
+      const undoUntil = Date.now() + 6_000;
       pendingUndo.set(message.tweetId, {
-        undoUntil: Date.now() + 6_000,
+        undoUntil,
         bookmark: deleteIntent.bookmark,
+        requestedAt: deleteIntent.requestedAt,
       });
       await persistPendingUndo();
-      throw error;
+      scheduleUndoExpiry(message.tweetId, pendingUndo.get(message.tweetId));
+      return {
+        ok: true,
+        recovery: true,
+        undoUntil,
+        warning: 'Bookmark removed; local state recovery pending',
+      };
     }
     const undoUntil = Date.now() + 6_000;
-    pendingUndo.set(message.tweetId, { undoUntil, bookmark: deleteIntent.bookmark });
+    pendingUndo.set(message.tweetId, {
+      undoUntil,
+      bookmark: deleteIntent.bookmark,
+      requestedAt: deleteIntent.requestedAt,
+    });
     await persistPendingUndo();
     await updateActionState((state) => ({
       pendingActions: {
@@ -349,13 +470,7 @@ async function act(message, sender) {
         },
       },
     }));
-    setTimeout(() => {
-      if (pendingUndo.get(message.tweetId)?.undoUntil === undoUntil) {
-        pendingUndo.delete(message.tweetId);
-        void persistPendingUndo();
-        void clearPendingAction(message.tweetId);
-      }
-    }, 6_100);
+    scheduleUndoExpiry(message.tweetId, pendingUndo.get(message.tweetId));
     return { ok: true, undoUntil };
   }
 
@@ -373,6 +488,8 @@ async function act(message, sender) {
       pendingActions,
     };
   });
+  clearTimeout(undoExpiryTimers.get(message.tweetId)?.timer);
+  undoExpiryTimers.delete(message.tweetId);
   pendingUndo.delete(message.tweetId);
   await persistPendingUndo();
   return { ok: true };
@@ -452,8 +569,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'XBI_GET_STATE') {
-    pendingUndoReady
-      .then(loadState)
+    loadProjectedState()
       .then(sendResponse, (error) => sendResponse({ ok: false, error: String(error.message ?? error) }));
     return true;
   }

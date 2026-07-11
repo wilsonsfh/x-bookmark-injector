@@ -439,6 +439,61 @@ describe('popup dashboard', () => {
     expect(buttonNamed(fixture.elements.list, 'Done').disabled).toBe(false);
   });
 
+  it('renders and focuses recovered Undo after restart, then restores through a user click', async () => {
+    const undoUntil = Date.now() + 6_000;
+    const recoveredState = structuredClone(BASE_STATE);
+    recoveredState.cleared.oldest = { action: 'done', at: '2026-07-11T12:00:00Z', reconciliation: true };
+    recoveredState.pendingUndo = { oldest: { undoUntil, recovery: true } };
+    const restoredState = structuredClone(BASE_STATE);
+    let stateReads = 0;
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') {
+        stateReads += 1;
+        return structuredClone(stateReads === 1 ? recoveredState : restoredState);
+      }
+      if (message.action === 'undo') return { ok: true };
+      return { ok: true };
+    });
+    const fixture = await loadPopup({ sendMessage });
+
+    const undo = buttonNamed(fixture.elements.undoNotice, 'Undo');
+    expect(undo).toBeDefined();
+    expect(fixture.document.activeElement).toBe(undo);
+    expect(fixture.elements.undoNotice.textContent).toContain('Removed from X.');
+
+    await undo.dispatch('click');
+
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'XBI_ACTION', action: 'undo', tweetId: 'oldest' });
+    expect(fixture.elements.undoNotice.hidden).toBe(true);
+    expect(fixture.document.activeElement).toBe(buttonNamed(fixture.elements.list, 'Done'));
+  });
+
+  it('shows Undo instead of failure for a remote-success local-recovery response', async () => {
+    const undoUntil = Date.now() + 6_000;
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(BASE_STATE);
+      if (message.action === 'done') {
+        return {
+          ok: true,
+          recovery: true,
+          undoUntil,
+          warning: 'Bookmark removed; local state recovery pending',
+        };
+      }
+      return { ok: true };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    const done = buttonNamed(fixture.elements.list.querySelectorAll('article')[0], 'Done');
+
+    await done.dispatch('click');
+
+    const undo = buttonNamed(fixture.elements.undoNotice, 'Undo');
+    expect(undo).toBeDefined();
+    expect(fixture.document.activeElement).toBe(undo);
+    expect(fixture.elements.error.hidden).toBe(true);
+    expect(fixture.elements.error.textContent).toBe('');
+  });
+
   it('does not let a storage render erase an active Undo control', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));

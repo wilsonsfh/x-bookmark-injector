@@ -543,6 +543,25 @@ describe('bookmark card injection', () => {
     expect(fixture.document.getElementById('xbi-undo')).toBeNull();
   });
 
+  it('dismisses the feed card and focuses Undo for a remote-success recovery response', async () => {
+    const undoUntil = Date.now() + 6_000;
+    const sendMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      recovery: true,
+      undoUntil,
+      warning: 'Bookmark removed; local state recovery pending',
+    });
+    const fixture = await loadContent({ sendMessage });
+    const doneButton = fixture.document.getElementById('xbi-card').findAll('button')[1];
+
+    await doneButton.eventListeners.get('click')();
+
+    expect(fixture.document.getElementById('xbi-card')).toBeNull();
+    const undo = fixture.document.getElementById('xbi-undo').findAll('button')[0];
+    expect(undo).toBeDefined();
+    expect(fixture.document.activeElement).toBe(undo);
+  });
+
   it('restores focus to the feed when the Undo window expires', async () => {
     const sendMessage = vi.fn(async (message) => (
       message.action === 'done'
