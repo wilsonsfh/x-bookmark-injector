@@ -95,6 +95,19 @@ let currentCard = null;
 let visitModel = null;
 let lastPath = location.pathname;
 let mutationFramePending = false;
+let stateLoadInFlight = null;
+
+function loadSharedState() {
+  if (!stateLoadInFlight) {
+    const pending = loadState();
+    stateLoadInFlight = pending;
+    const clearPending = () => {
+      if (stateLoadInFlight === pending) stateLoadInFlight = null;
+    };
+    pending.then(clearPending, clearPending);
+  }
+  return stateLoadInFlight;
+}
 
 function findTimeline() {
   return document.querySelector(SEL.primaryColumn)?.querySelector(SEL.timeline) ?? null;
@@ -120,6 +133,57 @@ function positionCard() {
   return true;
 }
 
+function showUndoToast(tweetId, undoUntil) {
+  document.getElementById('xbi-undo')?.remove();
+  const toast = document.createElement('div');
+  toast.id = 'xbi-undo';
+  toast.role = 'status';
+  toast.setAttribute('aria-live', 'polite');
+  toast.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;background:#1d9bf0;color:white;padding:10px 14px;border-radius:999px;font:700 14px system-ui;box-shadow:0 8px 30px #0008';
+  toast.append('Bookmark removed from X · ');
+  const undo = document.createElement('button');
+  undo.type = 'button';
+  undo.textContent = 'Undo';
+  undo.style.cssText = 'border:0;background:transparent;color:white;text-decoration:underline;font:inherit;cursor:pointer';
+  let undoPending = false;
+  undo.addEventListener('click', async () => {
+    if (undoPending) return;
+    undoPending = true;
+    undo.disabled = true;
+    let result;
+    try {
+      result = await chrome.runtime.sendMessage({ type: 'XBI_ACTION', action: 'undo', tweetId });
+    } catch {
+      result = null;
+    }
+    toast.textContent = result?.ok === true
+      ? 'Bookmark restored'
+      : (result?.ok === false && typeof result.error === 'string' ? result.error : 'Undo failed');
+    setTimeout(() => toast.remove(), 1_200);
+  });
+  toast.append(undo);
+  document.body.append(toast);
+  setTimeout(() => toast.remove(), Math.max(0, undoUntil - Date.now()));
+}
+
+async function maybeSync() {
+  if (!isHome()) return;
+  try {
+    const state = await loadSharedState();
+    const lastSync = state.meta.lastSync === null
+      ? 0
+      : new Date(state.meta.lastSync).getTime();
+    const hours = state.settings.syncEveryHours;
+    if (!Number.isFinite(lastSync) || !Number.isFinite(hours) || hours <= 0) return;
+    const age = lastSync === 0 ? Infinity : Date.now() - lastSync;
+    if (age >= hours * 3_600_000 && state.meta.syncStatus !== 'syncing') {
+      await chrome.runtime.sendMessage({ type: 'XBI_SYNC' });
+    }
+  } catch {
+    // A future navigation or storage update can retry without disrupting the card.
+  }
+}
+
 async function pinRandomCard() {
   if (!isHome()) { removeCard(); return; }
   if (!firstTimelineCell()?.parentElement) { removeCard(); return; }
@@ -130,7 +194,7 @@ async function pinRandomCard() {
 
   try {
     if (!visitModel) {
-      const state = await loadState();
+      const state = await loadSharedState();
       if (visit !== homeVisit) return;
       const bookmark = pickBookmark(state.bookmarks, state.cleared, {
         cooldownHours: state.settings.keepCooldownHours,
@@ -162,7 +226,16 @@ async function pinRandomCard() {
         action,
         tweetId: bookmark.id,
       });
-      if (result?.ok === true) dismiss();
+      const validSuccess = result?.ok === true
+        && (action !== 'done'
+          || (Number.isFinite(result.undoUntil) && result.undoUntil > Date.now()));
+      if (!validSuccess) {
+        return result?.ok === false && typeof result.error === 'string'
+          ? result
+          : { ok: false };
+      }
+      dismiss();
+      if (action === 'done') showUndoToast(bookmark.id, result.undoUntil);
       return result;
     };
     card = buildCardElement(
@@ -214,6 +287,7 @@ setInterval(() => {
     removeCard();
     currentCard = null;
     visitModel = null;
+    stateLoadInFlight = null;
     loadInFlight = false;
     visitCompleted = false;
     void pinRandomCard();
@@ -221,4 +295,11 @@ setInterval(() => {
 }, 500);
 
 void pinRandomCard();
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.bookmarks && !visitModel) {
+    visitCompleted = false;
+    void pinRandomCard();
+  }
+});
+void maybeSync();
 console.debug('[xbi] content loaded');

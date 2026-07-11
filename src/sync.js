@@ -1,0 +1,22 @@
+export async function collectBookmarkPages(fetchPage, { maxPages = 100 } = {}) {
+  const tweets = [];
+  const seenCursors = new Set();
+  let cursor = null;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await fetchPage(cursor);
+    if (!result || !Array.isArray(result.tweets)
+      || (result.nextCursor !== null && typeof result.nextCursor !== 'string')) {
+      throw new Error('Bookmark pagination response invalid');
+    }
+    tweets.push(...result.tweets);
+    if (!result.nextCursor) return tweets;
+    if (seenCursors.has(result.nextCursor)) {
+      throw new Error('Bookmark pagination cursor repeated');
+    }
+    seenCursors.add(result.nextCursor);
+    cursor = result.nextCursor;
+  }
+
+  throw new Error('Bookmark pagination page limit reached');
+}

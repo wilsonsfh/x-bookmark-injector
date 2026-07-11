@@ -28,6 +28,10 @@ class FakeElement {
 
   append(...children) {
     for (const child of children) {
+      if (typeof child === 'string') {
+        this.textContent += child;
+        continue;
+      }
       child.remove();
       this.children.push(child);
       child.parentElement = this;
@@ -146,7 +150,7 @@ const TEST_STATE = {
     },
   },
   cleared: {},
-  meta: { total: 1 },
+  meta: { total: 1, lastSync: '2999-01-01T00:00:00.000Z', syncStatus: 'idle' },
   settings: { keepCooldownHours: 72, confirmRealDelete: true, deleteConfirmed: false },
 };
 
@@ -174,6 +178,7 @@ async function loadContent(options = {}) {
   let intervalCallback;
   let frameCallback;
   let runtimeMessageCallback;
+  let storageChangedCallback;
   let windowMessageCallback;
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   const requestAnimationFrame = vi.fn((callback) => {
@@ -197,7 +202,10 @@ async function loadContent(options = {}) {
   };
   vi.stubGlobal('chrome', {
     runtime,
-    storage: { local: { get: storageGet } },
+    storage: {
+      local: { get: storageGet },
+      onChanged: { addListener: vi.fn((listener) => { storageChangedCallback = listener; }) },
+    },
   });
   const pageWindow = {
     confirm,
@@ -252,6 +260,10 @@ async function loadContent(options = {}) {
     pageMessage: (data, source = pageWindow) => windowMessageCallback({ data, source }),
     sendMessage,
     storageGet,
+    storageChanged: async (changes, area = 'local') => {
+      storageChangedCallback(changes, area);
+      await flush();
+    },
   };
 }
 
@@ -389,7 +401,10 @@ describe('bookmark card injection', () => {
   });
 
   it('sends keep and confirmed done actions and dismisses the card', async () => {
-    const fixture = await loadContent();
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, undoUntil: Date.now() + 6_000 });
+    const fixture = await loadContent({ sendMessage });
     const buttons = fixture.document.getElementById('xbi-card').findAll('button');
 
     await buttons[0].eventListeners.get('click')();
@@ -438,6 +453,82 @@ describe('bookmark card injection', () => {
 
     expect(fixture.document.getElementById('xbi-card')).toBe(card);
     expect(status.textContent).toBe('Could not update this bookmark. Try again.');
+  });
+
+  it('fails closed when Done success omits its validated Undo window', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true });
+    const fixture = await loadContent({ sendMessage });
+    const card = fixture.document.getElementById('xbi-card');
+    const doneButton = card.findAll('button')[1];
+    const status = card.findAll('p').find((node) => node.className === 'xbi-status');
+
+    await doneButton.eventListeners.get('click')();
+
+    expect(fixture.document.getElementById('xbi-card')).toBe(card);
+    expect(status.textContent).toBe('Could not update this bookmark. Try again.');
+  });
+
+  it('offers Undo for 6 seconds and sends CreateBookmark through the background action', async () => {
+    const undoUntil = Date.now() + 6_000;
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce({ ok: true, undoUntil })
+      .mockResolvedValueOnce({ ok: true });
+    const fixture = await loadContent({ sendMessage });
+    vi.useFakeTimers();
+    const doneButton = fixture.document.getElementById('xbi-card').findAll('button')[1];
+
+    await doneButton.eventListeners.get('click')();
+    const toast = fixture.document.getElementById('xbi-undo');
+    const undoButton = toast.findAll('button')[0];
+    const firstClick = undoButton.eventListeners.get('click')();
+    const secondClick = undoButton.eventListeners.get('click')();
+    await Promise.all([firstClick, secondClick]);
+
+    expect(sendMessage.mock.calls).toEqual([
+      [{ type: 'XBI_ACTION', action: 'done', tweetId: '1806' }],
+      [{ type: 'XBI_ACTION', action: 'undo', tweetId: '1806' }],
+    ]);
+    expect(toast.textContent).toBe('Bookmark restored');
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect(fixture.document.getElementById('xbi-undo')).toBeNull();
+  });
+
+  it('keeps the Undo toast visible with an error when restore fails', async () => {
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce({ ok: true, undoUntil: Date.now() + 6_000 })
+      .mockResolvedValueOnce(undefined);
+    const fixture = await loadContent({ sendMessage });
+    const doneButton = fixture.document.getElementById('xbi-card').findAll('button')[1];
+    await doneButton.eventListeners.get('click')();
+    const toast = fixture.document.getElementById('xbi-undo');
+
+    await toast.findAll('button')[0].eventListeners.get('click')();
+
+    expect(toast.textContent).toBe('Undo failed');
+  });
+
+  it.each([
+    [{ ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: '2020-01-01T00:00:00.000Z' } }, 1],
+    [{ ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: null, syncStatus: 'syncing' } }, 0],
+    [{ ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: 'not-a-date' } }, 0],
+  ])('automatically syncs only a valid stale idle cache', async (state, expectedSyncs) => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, total: 1 });
+    await loadContent({ storageGet: vi.fn().mockResolvedValue(state), sendMessage });
+
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_SYNC')).toHaveLength(expectedSyncs);
+  });
+
+  it('renders after sync publication when the initial cache was empty', async () => {
+    const empty = { ...TEST_STATE, bookmarks: {}, meta: { ...TEST_STATE.meta, total: 0 } };
+    const storageGet = vi.fn()
+      .mockResolvedValueOnce(empty)
+      .mockResolvedValue(TEST_STATE);
+    const fixture = await loadContent({ storageGet });
+    expect(fixture.document.getElementById('xbi-card')).toBeNull();
+
+    await fixture.storageChanged({ bookmarks: { oldValue: {}, newValue: TEST_STATE.bookmarks } });
+
+    expect(fixture.document.getElementById('xbi-card')).not.toBeNull();
   });
 
   it('treats declined delete confirmation as explicit cancellation', async () => {
