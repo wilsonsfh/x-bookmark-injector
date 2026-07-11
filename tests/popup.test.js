@@ -44,6 +44,7 @@ class FakeElement {
   }
 
   async dispatch(type, extra = {}) {
+    if (type === 'click' && this.disabled) return;
     const event = { currentTarget: this, target: this, ...extra };
     await Promise.all((this.eventListeners.get(type) ?? []).map((handler) => handler(event)));
   }
@@ -160,6 +161,7 @@ function makeDocument() {
     ['lastSync', 'div'],
     ['sync', 'button'],
     ['error', 'div'],
+    ['undoNotice', 'div'],
     ['activity', 'div'],
     ['confirmDelete', 'input'],
     ['list', 'main'],
@@ -172,6 +174,7 @@ function makeDocument() {
   }));
   elements.sync.textContent = 'Sync now';
   elements.error.hidden = true;
+  elements.undoNotice.hidden = true;
   elements.confirmDelete.type = 'checkbox';
   elements.list.textContent = 'Loading…';
   document.createElement = (tag) => {
@@ -418,8 +421,8 @@ describe('popup dashboard', () => {
 
     expect(fixture.elements.left.textContent).toBe('1');
     expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(1);
-    expect(fixture.elements.error.textContent).toContain('Removed from X.');
-    const undo = buttonNamed(fixture.elements.error, 'Undo');
+    expect(fixture.elements.undoNotice.textContent).toContain('Removed from X.');
+    const undo = buttonNamed(fixture.elements.undoNotice, 'Undo');
     expect(undo).toBeDefined();
     expect(fixture.document.activeElement).toBe(undo);
 
@@ -428,7 +431,7 @@ describe('popup dashboard', () => {
     expect(fixture.runtimeSend).toHaveBeenLastCalledWith({ type: 'XBI_GET_STATE' });
     expect(fixture.elements.left.textContent).toBe('2');
     expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2);
-    expect(fixture.elements.error.hidden).toBe(true);
+    expect(fixture.elements.undoNotice.hidden).toBe(true);
     expect(fixture.document.activeElement).toBe(buttonNamed(fixture.elements.list, 'Done'));
   });
 
@@ -448,13 +451,85 @@ describe('popup dashboard', () => {
     const fixture = await loadPopup({ sendMessage });
     await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
     await buttonNamed(fixture.elements.list.querySelectorAll('article')[0], 'Done').dispatch('click');
-    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeDefined();
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeDefined();
 
     fixture.storageChanged({}, 'local');
     await vi.waitFor(() => expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_GET_STATE')).toHaveLength(3));
 
-    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeDefined();
-    expect(fixture.elements.error.textContent).toContain('Removed from X.');
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeDefined();
+    expect(fixture.elements.undoNotice.textContent).toContain('Removed from X.');
+  });
+
+  it('blocks a second Done through rerenders for the first Undo full window', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const state = structuredClone(BASE_STATE);
+    let undoUntil;
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(state);
+      if (message.action === 'done') {
+        state.cleared[message.tweetId] = { action: 'done', at: new Date().toISOString() };
+        state.settings.deleteConfirmed = true;
+        undoUntil = Date.now() + 6_000;
+        return { ok: true, undoUntil };
+      }
+      return { ok: false };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    await buttonNamed(fixture.elements.list.querySelectorAll('article')[0], 'Done').dispatch('click');
+    const firstUndo = buttonNamed(fixture.elements.undoNotice, 'Undo');
+
+    const remainingDone = buttonNamed(fixture.elements.list, 'Done');
+    expect(remainingDone.disabled).toBe(true);
+    expect(buttonNamed(fixture.elements.list, 'Keep').disabled).toBe(false);
+    await remainingDone.dispatch('click');
+    fixture.storageChanged({}, 'local');
+    await vi.waitFor(() => expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_GET_STATE')).toHaveLength(3));
+
+    expect(buttonNamed(fixture.elements.list, 'Done').disabled).toBe(true);
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBe(firstUndo);
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_ACTION' && message.action === 'done')).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(Math.max(0, undoUntil - Date.now() - 1));
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBe(firstUndo);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeUndefined();
+  });
+
+  it('keeps Undo visible while sync, settings, and Keep failures use the error region', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-07-11T12:00:00Z'));
+    const state = structuredClone(BASE_STATE);
+    const sendMessage = vi.fn(async (message) => {
+      if (message.type === 'XBI_GET_STATE') return structuredClone(state);
+      if (message.action === 'done') {
+        state.cleared[message.tweetId] = { action: 'done', at: new Date().toISOString() };
+        state.settings.deleteConfirmed = true;
+        return { ok: true, undoUntil: Date.now() + 6_000 };
+      }
+      if (message.type === 'XBI_SYNC') return { ok: false, error: 'Sync failed during Undo' };
+      if (message.type === 'XBI_UPDATE_SETTINGS') return { ok: false, error: 'Settings failed during Undo' };
+      if (message.action === 'keep') return { ok: false, error: 'Keep failed during Undo' };
+      return { ok: false };
+    });
+    const fixture = await loadPopup({ sendMessage });
+    await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
+    await buttonNamed(fixture.elements.list, 'Done').dispatch('click');
+    const undo = buttonNamed(fixture.elements.undoNotice, 'Undo');
+
+    await fixture.elements.sync.dispatch('click');
+    expect(fixture.elements.error.textContent).toBe('Sync failed during Undo');
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBe(undo);
+
+    fixture.elements.confirmDelete.checked = false;
+    await fixture.elements.confirmDelete.dispatch('change');
+    expect(fixture.elements.error.textContent).toBe('Settings failed during Undo');
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBe(undo);
+
+    await buttonNamed(fixture.elements.list, 'Keep').dispatch('click');
+    expect(fixture.elements.error.textContent).toBe('Keep failed during Undo');
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBe(undo);
   });
 
   it('shows Undo expiry and moves focus to Sync when the window closes', async () => {
@@ -476,8 +551,8 @@ describe('popup dashboard', () => {
 
     await vi.advanceTimersByTimeAsync(6_001);
 
-    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeUndefined();
-    expect(fixture.elements.error.textContent).toBe('Undo window expired');
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeUndefined();
+    expect(fixture.elements.undoNotice.textContent).toBe('Undo window expired');
     expect(fixture.document.activeElement).toBe(fixture.elements.sync);
   });
 
@@ -499,20 +574,20 @@ describe('popup dashboard', () => {
     const fixture = await loadPopup({ sendMessage });
     await vi.waitFor(() => expect(fixture.elements.list.querySelectorAll('article')).toHaveLength(2));
     await buttonNamed(fixture.elements.list, 'Done').dispatch('click');
-    const undo = buttonNamed(fixture.elements.error, 'Undo');
+    const undo = buttonNamed(fixture.elements.undoNotice, 'Undo');
 
     const pending = undo.dispatch('click');
     await vi.waitFor(() => expect(undo.textContent).toBe('Restoring…'));
     expect(undo.getAttribute('aria-label')).toBe('Restoring bookmark');
-    expect(fixture.elements.error.getAttribute('aria-busy')).toBe('true');
+    expect(fixture.elements.undoNotice.getAttribute('aria-busy')).toBe('true');
     expect(fixture.elements.activity.textContent).toBe('Restoring bookmark');
     await vi.advanceTimersByTimeAsync(6_001);
     restore.resolve({ ok: false, error: 'restore failed' });
     await pending;
 
-    expect(buttonNamed(fixture.elements.error, 'Undo')).toBeUndefined();
-    expect(fixture.elements.error.textContent).toBe('Undo window expired');
-    expect(fixture.elements.error.getAttribute('aria-busy')).toBe('false');
+    expect(buttonNamed(fixture.elements.undoNotice, 'Undo')).toBeUndefined();
+    expect(fixture.elements.undoNotice.textContent).toBe('Undo window expired');
+    expect(fixture.elements.undoNotice.getAttribute('aria-busy')).toBe('false');
     expect(fixture.document.activeElement).toBe(fixture.elements.sync);
   });
 
@@ -613,6 +688,7 @@ describe('popup dashboard', () => {
 
     expect(html).toContain('<html lang="en">');
     expect(html).toMatch(/id="error"[^>]*role="status"[^>]*aria-live="polite"/);
+    expect(html).toMatch(/id="undoNotice"[^>]*role="status"[^>]*aria-live="polite"/);
     expect(html).toContain(':focus-visible');
     expect(html).toMatch(/min-height:\s*24px/);
     expect(html).toContain('aria-label="Confirm before deleting bookmarks from X"');
@@ -624,10 +700,14 @@ describe('popup dashboard', () => {
     const background = cssColor(html, 'bg');
     const primary = cssColor(html, 'blue');
     const hover = cssColor(html, 'blue-hover');
+    const textBlue = cssColor(html, 'blue-text');
 
     expect(contrast(primary, '#fff')).toBeGreaterThanOrEqual(4.5);
     expect(contrast(hover, '#fff')).toBeGreaterThanOrEqual(4.5);
     expect(contrast(primary, background)).toBeGreaterThanOrEqual(3);
+    expect(textBlue).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(contrast(textBlue, background)).toBeGreaterThanOrEqual(4.5);
+    expect(html).toMatch(/\.rank\s*{[^}]*color:\s*var\(--blue-text\)/s);
     expect(html).toContain('@media (forced-colors: active)');
     expect(html).toContain('outline: 2px solid Highlight');
   });

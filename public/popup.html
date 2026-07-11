@@ -15,6 +15,7 @@
       --muted: #8b98a5;
       --blue: #0875b8;
       --blue-hover: #066aa8;
+      --blue-text: #1d9bf0;
       --danger: #ff7a7a;
       --space-1: 4px;
       --space-2: 8px;
@@ -124,13 +125,22 @@
       box-shadow: var(--focus);
     }
 
-    .status {
+    .status,
+    .undo-status {
       min-height: 20px;
       margin-top: 6px;
+    }
+
+    .status {
       color: var(--danger);
     }
 
-    .status button {
+    .undo-status {
+      color: var(--muted);
+    }
+
+    .status button,
+    .undo-status button {
       min-height: 24px;
       margin-left: var(--space-1);
       padding: 1px 8px;
@@ -166,7 +176,7 @@
     }
 
     .rank {
-      color: var(--blue);
+      color: var(--blue-text);
       font-size: 12px;
       white-space: nowrap;
     }
@@ -232,6 +242,7 @@
       <button id="sync" class="primary" type="button">Sync now</button>
     </div>
     <div id="error" class="status" role="status" aria-live="polite" hidden></div>
+    <div id="undoNotice" class="undo-status" role="status" aria-live="polite" hidden></div>
     <div id="activity" class="sr-only" role="status" aria-live="polite"></div>
   </section>
   <section class="settings" aria-label="Delete settings">

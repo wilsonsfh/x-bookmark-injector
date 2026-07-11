@@ -22,7 +22,6 @@ function errorMessage(result, fallback) {
 }
 
 function showError(message) {
-  if (activeUndo) return;
   noticeVersion += 1;
   $('error').hidden = !message;
   $('error').textContent = message ?? '';
@@ -40,20 +39,34 @@ function focusDone(tweetId) {
     ?.focus();
 }
 
+function setDoneActionsDisabled(disabled) {
+  for (const button of $('list').querySelectorAll('button')) {
+    if (button.getAttribute('data-action') === 'done') button.disabled = disabled;
+  }
+}
+
+function clearUndoNotice() {
+  const notice = $('undoNotice');
+  notice.hidden = true;
+  notice.setAttribute('aria-busy', 'false');
+  notice.textContent = '';
+}
+
 function showUndoExpired(session) {
   if (activeUndo !== session) return;
   activeUndo = null;
-  const notice = $('error');
+  const notice = $('undoNotice');
   notice.hidden = false;
   notice.setAttribute('aria-busy', 'false');
   notice.textContent = 'Undo window expired';
   announce('Undo window expired');
+  setDoneActionsDisabled(false);
   $('sync').focus();
 }
 
 function showUndo(tweetId, undoUntil) {
   const version = ++noticeVersion;
-  const notice = $('error');
+  const notice = $('undoNotice');
   const undo = document.createElement('button');
   undo.type = 'button';
   undo.textContent = 'Undo';
@@ -78,6 +91,7 @@ function showUndo(tweetId, undoUntil) {
       activeUndo = null;
       notice.setAttribute('aria-busy', 'false');
       announce('');
+      clearUndoNotice();
       await render();
       focusDone(tweetId);
       return;
@@ -103,6 +117,7 @@ function showUndo(tweetId, undoUntil) {
   notice.setAttribute('aria-busy', 'false');
   notice.replaceChildren('Removed from X. ', undo);
   activeUndo = session;
+  setDoneActionsDisabled(true);
   announce('Bookmark removed. Undo available');
   undo.focus();
   setTimeout(() => {
@@ -121,7 +136,9 @@ function setActionsPending(actions, activeButton, pendingLabel, pendingAccessibl
 }
 
 function restoreActions(actions, activeButton, label, accessibleLabel) {
-  for (const actionButton of actions.querySelectorAll('button')) actionButton.disabled = false;
+  for (const actionButton of actions.querySelectorAll('button')) {
+    actionButton.disabled = actionButton.getAttribute('data-action') === 'done' && Boolean(activeUndo);
+  }
   actions.setAttribute('aria-busy', 'false');
   activeButton.textContent = label;
   activeButton.setAttribute('aria-label', accessibleLabel);
@@ -134,8 +151,11 @@ function actionButton(label, action, bookmark, actions) {
   const element = document.createElement('button');
   element.type = 'button';
   element.textContent = label;
+  element.setAttribute('data-action', action);
   element.setAttribute('aria-label', accessibleLabel);
+  if (action === 'done' && activeUndo) element.disabled = true;
   element.addEventListener('click', async () => {
+    if (action === 'done' && activeUndo) return;
     if (action === 'done' && currentSettings.confirmRealDelete && currentSettings.deleteConfirmed !== true) {
       const approved = window.confirm('Remove this bookmark from X for real? You will have 6 seconds to Undo.');
       if (!approved) return;
