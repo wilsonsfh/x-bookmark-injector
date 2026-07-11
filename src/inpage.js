@@ -1,4 +1,44 @@
-import { captureFromRequest, EXT_SOURCE, PAGE_SOURCE } from './bridge.js';
+import {
+  captureFromRequest,
+  EXT_SOURCE,
+  PAGE_SOURCE,
+  parseXGraphqlUrl,
+  validatePageRequest,
+} from './bridge.js';
+
+export const MAIN_REQUEST_TIMEOUT_MS = 15_000;
+export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+async function readResponseText(response) {
+  const declaredLength = Number(response.headers?.get?.('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    throw new Error('Page response too large');
+  }
+
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
+      throw new Error('Page response too large');
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error('Page response too large');
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
 
 export function installInpageBridge(scope, {
   HeadersCtor = Headers,
@@ -72,23 +112,30 @@ export function installInpageBridge(scope, {
     ) return;
 
     const { requestId, request } = message;
+    let operation = null;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, MAIN_REQUEST_TIMEOUT_MS);
     try {
-      let url;
-      try {
-        url = new URL(request?.url);
-      } catch {
-        throw new Error('Blocked non-X GraphQL page request');
-      }
+      const parsedRequest = validatePageRequest(request);
+      if (!parsedRequest) throw new Error('Blocked non-X GraphQL page request');
+      operation = parsedRequest.operation;
+      const response = await realFetch(parsedRequest.url.href, {
+        ...request.init,
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      const responseUrl = parseXGraphqlUrl(response.url, { absoluteOnly: true });
       if (
-        url.origin !== 'https://x.com'
-        || url.username
-        || url.password
-        || captureFromRequest(url.href, {}) === null
+        !responseUrl
+        || responseUrl.url.pathname !== parsedRequest.url.pathname
       ) {
-        throw new Error('Blocked non-X GraphQL page request');
+        throw new Error('Blocked redirected GraphQL response');
       }
-      const response = await realFetch(url.href, request.init);
-      const text = await response.text();
+      const text = await readResponseText(response);
       let payload;
       try {
         payload = JSON.parse(text);
@@ -99,6 +146,7 @@ export function installInpageBridge(scope, {
         source: PAGE_SOURCE,
         type: 'XBI_EXECUTE_RESULT',
         requestId,
+        operation,
         ok: response.ok,
         status: response.status,
         payload,
@@ -108,10 +156,15 @@ export function installInpageBridge(scope, {
         source: PAGE_SOURCE,
         type: 'XBI_EXECUTE_RESULT',
         requestId,
+        ...(operation ? { operation } : {}),
         ok: false,
         status: 0,
-        error: error instanceof Error ? error.message : 'Page request failed',
+        error: timedOut
+          ? 'Page request timed out'
+          : error instanceof Error ? error.message : 'Page request failed',
       }, '*');
+    } finally {
+      clearTimeout(timeout);
     }
   });
 }

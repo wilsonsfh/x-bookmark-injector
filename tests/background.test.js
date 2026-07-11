@@ -79,6 +79,7 @@ describe('service-worker auth capture', () => {
         ...BOOKMARKS_CAPTURE,
         operation: 'DeleteBookmark',
         queryId: 'delete123',
+        operationTemplate: { ...BOOKMARKS_CAPTURE.operationTemplate, method: 'POST' },
       },
     });
     await vi.waitFor(() => expect(second.sendResponse).toHaveBeenCalled());
@@ -93,6 +94,56 @@ describe('service-worker auth capture', () => {
     expect(malformed.returned).toBe(false);
     expect(malformed.sendResponse).not.toHaveBeenCalled();
     expect(background.set).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps persisted IDs to bookmark operations and deduplicates unchanged IDs', async () => {
+    const background = await loadBackground();
+    for (const [operation, queryId] of [
+      ['Bookmarks', 'read123'],
+      ['DeleteBookmark', 'delete123'],
+      ['CreateBookmark', 'create123'],
+    ]) {
+      const result = background.invoke({
+        type: 'XBI_AUTH_CAPTURE',
+        capture: {
+          ...BOOKMARKS_CAPTURE,
+          operation,
+          queryId,
+          operationTemplate: {
+            ...BOOKMARKS_CAPTURE.operationTemplate,
+            method: operation === 'Bookmarks' ? 'GET' : 'POST',
+          },
+        },
+      });
+      await vi.waitFor(() => expect(result.sendResponse).toHaveBeenCalledWith({ ok: true }));
+    }
+
+    const duplicate = background.invoke({
+      type: 'XBI_AUTH_CAPTURE',
+      capture: { ...BOOKMARKS_CAPTURE, bearer: 'Bearer rotated-session' },
+    });
+
+    expect(duplicate.returned).toBe(false);
+    expect(duplicate.sendResponse).toHaveBeenCalledWith({ ok: true });
+    expect(background.set).toHaveBeenCalledTimes(3);
+    expect(background.set).toHaveBeenLastCalledWith({
+      auth: {
+        queryIds: {
+          Bookmarks: 'read123',
+          DeleteBookmark: 'delete123',
+          CreateBookmark: 'create123',
+        },
+      },
+    });
+    const session = background.invoke({ type: 'XBI_GET_SESSION_AUTH' });
+    expect(session.sendResponse).toHaveBeenCalledWith(expect.objectContaining({
+      bearer: 'Bearer rotated-session',
+      queryIds: {
+        Bookmarks: 'read123',
+        DeleteBookmark: 'delete123',
+        CreateBookmark: 'create123',
+      },
+    }));
   });
 
   it('keeps the async channel open and reports storage failure without secrets', async () => {

@@ -5,6 +5,8 @@ import {
   mergeAuth,
   PAGE_SOURCE,
   sanitizeCapture,
+  validateExecutionResult,
+  validatePageRequest,
 } from './bridge.js';
 import { CARD_ID, SEL, isHome } from './selectors.js';
 import { loadState } from './storage.js';
@@ -19,6 +21,7 @@ let latestAuth = {
 };
 const pendingPageRequests = new Map();
 
+// Static source labels route messages; they do not authenticate page-world senders.
 window.addEventListener('message', (event) => {
   const message = event.data;
   if (event.source !== window || message?.source !== PAGE_SOURCE) return;
@@ -37,23 +40,26 @@ window.addEventListener('message', (event) => {
 
   if (message.type === 'XBI_EXECUTE_RESULT' && typeof message.requestId === 'string') {
     const pending = pendingPageRequests.get(message.requestId);
-    if (pending) {
+    if (pending && validateExecutionResult(message, pending.operation)) {
       pendingPageRequests.delete(message.requestId);
-      pending(message);
+      pending.resolve(message);
     }
   }
 });
 
-function executeInPage(request) {
+function executeInPage(request, operation) {
   const requestId = crypto.randomUUID();
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       pendingPageRequests.delete(requestId);
       resolve({ ok: false, status: 0, error: 'Page request timed out' });
     }, 20_000);
-    pendingPageRequests.set(requestId, (result) => {
-      clearTimeout(timeout);
-      resolve(result);
+    pendingPageRequests.set(requestId, {
+      operation,
+      resolve: (result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      },
     });
     try {
       window.postMessage({ source: EXT_SOURCE, type: 'XBI_EXECUTE', requestId, request }, '*');
@@ -71,7 +77,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
   if (message?.type === 'XBI_PAGE_REQUEST') {
-    executeInPage(message.request).then(sendResponse);
+    const request = validatePageRequest(message.request);
+    if (!request) {
+      sendResponse({ ok: false, status: 0, error: 'Invalid page request' });
+      return false;
+    }
+    executeInPage(message.request, request.operation).then(sendResponse);
     return true;
   }
   return false;

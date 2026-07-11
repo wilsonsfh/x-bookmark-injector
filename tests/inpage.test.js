@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EXT_SOURCE, PAGE_SOURCE } from '../src/bridge.js';
-import { installInpageBridge } from '../src/inpage.js';
+import {
+  installInpageBridge,
+  MAIN_REQUEST_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+} from '../src/inpage.js';
 
 class FakeXMLHttpRequest {
   open(...args) {
@@ -17,9 +21,25 @@ class FakeXMLHttpRequest {
   }
 }
 
+function pageRequest(url, init = {}) {
+  return {
+    url,
+    init: {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        authorization: 'Bearer session',
+        'x-csrf-token': 'csrf-session',
+      },
+      ...init,
+    },
+  };
+}
+
 function makeScope(fetch = vi.fn().mockResolvedValue({
   ok: true,
   status: 200,
+  url: 'https://x.com/i/api/graphql/read123/Bookmarks',
   text: vi.fn().mockResolvedValue('{"data":{"ok":true}}'),
 }), bridgeOptions = {}) {
   let messageListener;
@@ -40,6 +60,7 @@ function makeScope(fetch = vi.fn().mockResolvedValue({
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -47,7 +68,7 @@ describe('MAIN-world bridge', () => {
   it('captures fetch and XHR auth while delegating the original requests', async () => {
     const { scope } = makeScope();
 
-    await scope.fetch('https://x.com/i/api/graphql/read123/Bookmarks?variables=x', {
+    await scope.fetch('https://x.com/i/api/graphql/read123/Bookmarks?variables=%7B%7D', {
       headers: { authorization: 'Bearer secret', 'x-csrf-token': 'csrf' },
     });
     const xhr = new FakeXMLHttpRequest();
@@ -89,26 +110,107 @@ describe('MAIN-world bridge', () => {
     const fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      url: 'https://x.com/i/api/graphql/read123/Bookmarks?variables=%7B%7D',
       text: vi.fn().mockResolvedValue('{"data":{"bookmark_timeline_v2":{}}}'),
     });
     const { message, scope } = makeScope(fetch);
-    const request = {
-      url: 'https://x.com/i/api/graphql/read123/Bookmarks?variables=%7B%7D',
-      init: { headers: { authorization: 'Bearer session' } },
-    };
+    const request = pageRequest('https://x.com/i/api/graphql/read123/Bookmarks?variables=%7B%7D');
 
     await message({ source: EXT_SOURCE, type: 'XBI_EXECUTE', requestId: 'request-1', request });
 
     expect(fetch).toHaveBeenCalledOnce();
-    expect(fetch).toHaveBeenCalledWith(request.url, request.init);
+    expect(fetch).toHaveBeenCalledWith(request.url, {
+      ...request.init,
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
+    });
     expect(scope.postMessage).toHaveBeenLastCalledWith({
       source: PAGE_SOURCE,
       type: 'XBI_EXECUTE_RESULT',
       requestId: 'request-1',
+      operation: 'Bookmarks',
       ok: true,
       status: 200,
       payload: { data: { bookmark_timeline_v2: {} } },
     }, '*');
+  });
+
+  it('aborts MAIN requests before the relay timeout and clears the timer', async () => {
+    vi.useFakeTimers();
+    let signal;
+    const fetch = vi.fn((_url, init) => {
+      signal = init.signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    });
+    const { message, scope } = makeScope(fetch);
+
+    const execution = message({
+      source: EXT_SOURCE,
+      type: 'XBI_EXECUTE',
+      requestId: 'request-timeout',
+      request: pageRequest('https://x.com/i/api/graphql/read123/Bookmarks'),
+    });
+    await vi.advanceTimersByTimeAsync(MAIN_REQUEST_TIMEOUT_MS);
+    await execution;
+
+    expect(MAIN_REQUEST_TIMEOUT_MS).toBeLessThan(20_000);
+    expect(signal.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(scope.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestId: 'request-timeout',
+      ok: false,
+      error: 'Page request timed out',
+    }), '*');
+  });
+
+  it('rejects redirected response URLs even when fetch returns success', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://example.com/i/api/graphql/read123/Bookmarks',
+      text: vi.fn().mockResolvedValue('{"data":{}}'),
+    });
+    const { message, scope } = makeScope(fetch);
+
+    await message({
+      source: EXT_SOURCE,
+      type: 'XBI_EXECUTE',
+      requestId: 'request-redirect',
+      request: pageRequest('https://x.com/i/api/graphql/read123/Bookmarks'),
+    });
+
+    expect(fetch.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
+    expect(scope.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestId: 'request-redirect',
+      ok: false,
+      error: 'Blocked redirected GraphQL response',
+    }), '*');
+  });
+
+  it('rejects responses larger than the byte cap', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://x.com/i/api/graphql/read123/Bookmarks',
+      headers: new Headers(),
+      text: vi.fn().mockResolvedValue('x'.repeat(MAX_RESPONSE_BYTES + 1)),
+    });
+    const { message, scope } = makeScope(fetch);
+
+    await message({
+      source: EXT_SOURCE,
+      type: 'XBI_EXECUTE',
+      requestId: 'request-large',
+      request: pageRequest('https://x.com/i/api/graphql/read123/Bookmarks'),
+    });
+
+    expect(scope.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestId: 'request-large',
+      ok: false,
+      error: 'Page response too large',
+    }), '*');
   });
 
   it.each([
@@ -126,7 +228,7 @@ describe('MAIN-world bridge', () => {
       source: EXT_SOURCE,
       type: 'XBI_EXECUTE',
       requestId: 'request-2',
-      request: { url, init: {} },
+      request: pageRequest(url),
     });
 
     expect(fetch).not.toHaveBeenCalled();
@@ -147,7 +249,7 @@ describe('MAIN-world bridge', () => {
       source: EXT_SOURCE,
       type: 'XBI_EXECUTE',
       requestId: '',
-      request: { url: 'https://x.com/i/api/graphql/read123/Bookmarks' },
+      request: pageRequest('https://x.com/i/api/graphql/read123/Bookmarks'),
     };
 
     await message(execute, {});

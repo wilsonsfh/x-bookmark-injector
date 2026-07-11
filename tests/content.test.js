@@ -150,6 +150,18 @@ const TEST_STATE = {
   settings: { keepCooldownHours: 72, confirmRealDelete: true, deleteConfirmed: false },
 };
 
+const BOOKMARKS_PAGE_REQUEST = {
+  url: 'https://x.com/i/api/graphql/read123/Bookmarks',
+  init: {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      authorization: 'Bearer session',
+      'x-csrf-token': 'csrf-session',
+    },
+  },
+};
+
 async function loadContent(options = {}) {
   const fixture = makeFixture();
   options.configureFixture?.(fixture);
@@ -514,7 +526,7 @@ describe('bookmark card injection', () => {
     const fixture = await loadContent();
     const runtime = fixture.invokeRuntime({
       type: 'XBI_PAGE_REQUEST',
-      request: { url: 'https://x.com/i/api/graphql/read123/Bookmarks' },
+      request: BOOKMARKS_PAGE_REQUEST,
     });
     const executeMessage = fixture.pageWindow.postMessage.mock.calls.at(-1)[0];
 
@@ -529,8 +541,29 @@ describe('bookmark card injection', () => {
       source: 'xbi-page',
       type: 'XBI_EXECUTE_RESULT',
       requestId: 'wrong-request',
+      operation: 'Bookmarks',
       ok: true,
       status: 200,
+    });
+    expect(runtime.sendResponse).not.toHaveBeenCalled();
+
+    fixture.pageMessage({
+      source: 'xbi-page',
+      type: 'XBI_EXECUTE_RESULT',
+      requestId: executeMessage.requestId,
+      operation: 'DeleteBookmark',
+      ok: true,
+      status: 200,
+      payload: { data: {} },
+    });
+    fixture.pageMessage({
+      source: 'xbi-page',
+      type: 'XBI_EXECUTE_RESULT',
+      requestId: executeMessage.requestId,
+      operation: 'Bookmarks',
+      ok: true,
+      status: '200',
+      payload: { data: {} },
     });
     expect(runtime.sendResponse).not.toHaveBeenCalled();
 
@@ -538,6 +571,7 @@ describe('bookmark card injection', () => {
       source: 'xbi-page',
       type: 'XBI_EXECUTE_RESULT',
       requestId: executeMessage.requestId,
+      operation: 'Bookmarks',
       ok: true,
       status: 200,
       payload: { data: {} },
@@ -552,7 +586,7 @@ describe('bookmark card injection', () => {
     vi.useFakeTimers();
     const runtime = fixture.invokeRuntime({
       type: 'XBI_PAGE_REQUEST',
-      request: { url: 'https://x.com/i/api/graphql/read123/Bookmarks' },
+      request: BOOKMARKS_PAGE_REQUEST,
     });
 
     expect(runtime.returned).toBe(true);
@@ -563,5 +597,37 @@ describe('bookmark card injection', () => {
       status: 0,
       error: 'Page request timed out',
     });
+  });
+
+  it('rejects page requests outside the pending operation schema', async () => {
+    const fixture = await loadContent();
+    const unknownOperation = fixture.invokeRuntime({
+      type: 'XBI_PAGE_REQUEST',
+      request: {
+        ...BOOKMARKS_PAGE_REQUEST,
+        url: 'https://x.com/i/api/graphql/read123/UnknownOperation',
+      },
+    });
+    const missingAuth = fixture.invokeRuntime({
+      type: 'XBI_PAGE_REQUEST',
+      request: {
+        ...BOOKMARKS_PAGE_REQUEST,
+        init: { method: 'GET', credentials: 'include', headers: {} },
+      },
+    });
+
+    expect(unknownOperation.returned).toBe(false);
+    expect(missingAuth.returned).toBe(false);
+    expect(unknownOperation.sendResponse).toHaveBeenCalledWith({
+      ok: false,
+      status: 0,
+      error: 'Invalid page request',
+    });
+    expect(missingAuth.sendResponse).toHaveBeenCalledWith({
+      ok: false,
+      status: 0,
+      error: 'Invalid page request',
+    });
+    expect(fixture.pageWindow.postMessage).not.toHaveBeenCalled();
   });
 });
