@@ -12,13 +12,20 @@ function buildStaticCard() {
   return el;
 }
 
+function findTimeline() {
+  return document.querySelector(SEL.primaryColumn)?.querySelector(SEL.timeline) ?? null;
+}
+
 function pinCard() {
   if (!isHome()) { removeCard(); return; }
-  if (document.getElementById(CARD_ID)) return;         // no dup
-  const timeline = document.querySelector(SEL.timeline);
-  const firstCell = timeline?.querySelector(SEL.cell);
-  if (!firstCell?.parentElement) return;                 // not ready yet
-  firstCell.parentElement.insertBefore(buildStaticCard(), firstCell);
+  const timeline = findTimeline();
+  const firstCell = [...(timeline?.querySelectorAll(SEL.cell) ?? [])]
+    .find((cell) => cell.id !== CARD_ID);
+  if (!firstCell?.parentElement) { removeCard(); return; }
+
+  const card = document.getElementById(CARD_ID) ?? buildStaticCard();
+  if (firstCell.previousElementSibling === card) return;
+  firstCell.parentElement.insertBefore(card, firstCell);
 }
 
 function removeCard() {
@@ -26,7 +33,12 @@ function removeCard() {
 }
 
 const observer = new MutationObserver(() => pinCard());
-observer.observe(document.body, { childList: true, subtree: true });
+observer.observe(document.body, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['aria-selected'],
+});
 
 // SPA route changes: X uses pushState; re-evaluate on navigation.
 let lastPath = location.pathname;
