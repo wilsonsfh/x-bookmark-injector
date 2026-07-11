@@ -105,6 +105,10 @@ const CARD_CSS = `
 }
 #${CARD_ID} .xbi-action-primary:hover { background: color-mix(in srgb, var(--xbi-accent) 88%, currentColor); }
 #${CARD_ID} .xbi-action:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
+#${CARD_ID} .xbi-action-primary:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 3px var(--xbi-on-accent);
+}
 @media (max-width: 420px) {
   #${CARD_ID} .xbi-actions { align-items: stretch; flex-direction: column; }
 }

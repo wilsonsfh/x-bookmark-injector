@@ -9,6 +9,7 @@ export function normalizeTweet(raw) {
     .map((item) => ({
       type: item.type,
       url: item.media_url_https ?? item.media_url ?? '',
+      alt: item.ext_alt_text ?? '',
     }));
 
   return {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { normalizeTweet } from '../src/core/normalize.js';
 import { formatCardMeta, buildCardElement } from '../src/ui/card.js';
 
 class FakeElement {
@@ -163,6 +164,23 @@ describe('buildCardElement', () => {
     expect(contrastRatio(onAccent, accentFill)).toBeGreaterThanOrEqual(4.5);
   });
 
+  it('gives the focused primary action a contrasting inset indicator on X dark', () => {
+    installDom();
+    const card = buildCardElement(
+      { author: 'Zara Zhang', media: [], saveRank: 1, text: 'Read me' },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const css = card.findAll('style')[0].textContent;
+    const accentFill = cssToken(css, '--xbi-accent');
+    const insetFocus = cssToken(css, '--xbi-on-accent');
+
+    expect(css).toContain('.xbi-action-primary:focus-visible');
+    expect(css).toContain('box-shadow: inset 0 0 0 3px var(--xbi-on-accent)');
+    expect(contrastRatio(accentFill, '#000000')).toBeGreaterThanOrEqual(3);
+    expect(contrastRatio(insetFocus, accentFill)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it('locks both actions while one request is pending and ignores duplicate clicks', async () => {
     installDom();
     let resolveAction;
@@ -302,5 +320,32 @@ describe('buildCardElement', () => {
 
     expect(described.findAll('img')[0].alt).toBe('Diagram of the bookmark workflow');
     expect(fallback.findAll('img')[0].alt).toBe("Image from Zara Zhang's bookmarked post");
+  });
+
+  it('renders X ext_alt_text carried through tweet normalization', () => {
+    installDom();
+    const bookmark = normalizeTweet({
+      rest_id: '1806',
+      legacy: {
+        full_text: 'I hoard X bookmarks',
+        extended_entities: {
+          media: [{
+            type: 'photo',
+            media_url_https: 'https://pbs.twimg.com/workflow.jpg',
+            ext_alt_text: 'Diagram of the bookmark workflow',
+          }],
+        },
+      },
+      core: {
+        user_results: {
+          result: { legacy: { name: 'Zara Zhang', screen_name: 'zarazhangrui' } },
+        },
+      },
+    });
+    bookmark.saveRank = 1;
+
+    const card = buildCardElement(bookmark, { total: 1, left: 1 }, { onKeep: vi.fn(), onDone: vi.fn() });
+
+    expect(card.findAll('img')[0].alt).toBe('Diagram of the bookmark workflow');
   });
 });

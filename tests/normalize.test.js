@@ -7,7 +7,11 @@ const raw = {
     full_text: 'I hoard X bookmarks',
     created_at: 'Sat Jun 21 13:37:00 +0000 2026',
     extended_entities: {
-      media: [{ type: 'photo', media_url_https: 'https://pbs.twimg.com/a.jpg' }],
+      media: [{
+        type: 'photo',
+        media_url_https: 'https://pbs.twimg.com/a.jpg',
+        ext_alt_text: 'Diagram of the bookmark workflow',
+      }],
     },
   },
   core: {
@@ -33,7 +37,11 @@ describe('normalizeTweet', () => {
       handle: '@zarazhangrui',
       avatar: 'https://pbs.twimg.com/av.jpg',
       createdAt: '2026-06-21T13:37:00.000Z',
-      media: [{ type: 'photo', url: 'https://pbs.twimg.com/a.jpg' }],
+      media: [{
+        type: 'photo',
+        url: 'https://pbs.twimg.com/a.jpg',
+        alt: 'Diagram of the bookmark workflow',
+      }],
     });
   });
 
