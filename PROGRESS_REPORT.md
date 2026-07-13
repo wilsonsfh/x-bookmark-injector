@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | Native Option B read/sync loop | Live accepted | Author/avatar, pagination, first-position card, Read more/Show less and exact-status navigation passed in logged-in X |
 | Quoted/re-roll, link preview | Live accepted | Owner verified quoted expand, re-roll and link/article preview in logged-in X on 2026-07-13 (commit `14d833b`) |
+| Card action layout (actions on top) | Shipped; live reload pending | Actions moved into a compact top header in line with the provenance + author rows; commit `627f08e`; 313/313 tests + build green |
 | Auto-sync + 12h cross-device backstop | Shipped; live timing pending | Unit-tested and pushed; the 30-min gap and 12h mobile backstop were not instantly verifiable in-session |
 | Automated verification | Green | 313/313 tests, build passed, audit 0, diff check passed |
 | Source publication | Shipped | Public `wilsonsfh/x-bookmark-injector`, default branch `main`; all commits attributed to GitHub user `wilsonsfh` |
@@ -15,6 +16,19 @@
 
 ### 2026-07-13
 
+- Moved the resurfaced-bookmark card's action controls (Open on X, Keep for later,
+  Done · Remove, Show another bookmark) from the bottom footer into a compact top-of-card
+  header, in line with the "From your bookmarks" and author/time rows, on branch `main` at
+  commit `627f08e` (pushed `55e18b0..627f08e`). Refactored the card into a header
+  (avatar + identity on the left, a right-aligned actions cluster on the right) with the
+  readable body linking to the post below; the body-scoped Read more / Show quoted post
+  toggles stay with the body. Shrank the pills (36px→28px, 13px→12px font) and the re-roll
+  link so the cluster tucks beside the two header rows on wide columns and collapses to a
+  compact row under the header at narrower widths; controls stay outside the post-body link
+  (no interactive nesting). Files: `src/ui/card.js`, `tests/card.test.js`,
+  `docs/mockups/2026-07-13-top-actions-comparison.html`. Verified 313/313 tests, build and
+  `git diff --check`; confirmed the real built card at wide and default column widths.
+  Owner-requested layout; live reload acceptance pending.
 - Enriched the injected card and automated syncing on branch `main` at commit `14d833b`
   (pushed to `origin/main`, `d973209..14d833b`): inline expandable quoted post
   (`Show quoted post`), `Show another bookmark` re-roll, and a native link/article
