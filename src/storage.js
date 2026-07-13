@@ -16,7 +16,10 @@ export const DEFAULT_STATE = Object.freeze({
     confirmRealDelete: true,
     deleteConfirmed: false,
     keepCooldownHours: 72,
-    syncEveryHours: 24,
+    // On-Home staleness backstop. Its main job is catching bookmarks added or
+    // removed on OTHER devices (e.g. mobile), which the desktop add/remove
+    // detector cannot see; same-device changes are captured immediately by auto-sync.
+    syncEveryHours: 12,
   },
 });
 

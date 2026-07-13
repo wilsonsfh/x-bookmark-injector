@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PAGE_SOURCE } from '../src/bridge.js';
 
 class FakeElement {
   constructor(attributes = {}, textContent = '', tagName = 'div') {
@@ -82,6 +83,7 @@ class FakeElement {
   }
 
   matches(selector) {
+    if (selector.startsWith('.')) return this.className.split(' ').includes(selector.slice(1));
     if (selector.startsWith('#')) return this.id === selector.slice(1);
     if (selector === '[data-testid="primaryColumn"]') return this.attributes.get('data-testid') === 'primaryColumn';
     if (selector === '[aria-label^="Timeline"]') return this.attributes.get('aria-label')?.startsWith('Timeline') ?? false;
@@ -712,6 +714,38 @@ describe('bookmark card injection', () => {
     expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_SYNC')).toHaveLength(expectedSyncs);
   });
 
+  it('auto-syncs once, debounced, after the page reports bookmark changes', async () => {
+    // 40 minutes ago: recent enough that the 24h maybeSync does not fire at load,
+    // but older than the 30-minute auto-sync gap, so a bookmark change syncs.
+    const recent = new Date(Date.now() - 40 * 60_000).toISOString();
+    const state = { ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: recent, syncStatus: 'idle' } };
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, total: 1 });
+    const fixture = await loadContent({ storageGet: vi.fn().mockResolvedValue(state), sendMessage });
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_SYNC')).toHaveLength(0);
+    vi.useFakeTimers();
+
+    fixture.pageMessage({ source: PAGE_SOURCE, type: 'XBI_BOOKMARK_CHANGED', operation: 'CreateBookmark' });
+    fixture.pageMessage({ source: PAGE_SOURCE, type: 'XBI_BOOKMARK_CHANGED', operation: 'CreateBookmark' });
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_SYNC')).toHaveLength(1);
+  });
+
+  it('defers an auto-sync until the minimum gap when the cache was just synced', async () => {
+    const justSynced = new Date(Date.now() - 5_000).toISOString();
+    const state = { ...TEST_STATE, meta: { ...TEST_STATE.meta, lastSync: justSynced, syncStatus: 'idle' } };
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, total: 1 });
+    const fixture = await loadContent({ storageGet: vi.fn().mockResolvedValue(state), sendMessage });
+    vi.useFakeTimers();
+
+    fixture.pageMessage({ source: PAGE_SOURCE, type: 'XBI_BOOKMARK_CHANGED', operation: 'CreateBookmark' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_SYNC')).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'XBI_SYNC')).toHaveLength(1);
+  });
+
   it('renders after sync publication when the initial cache was empty', async () => {
     const empty = { ...TEST_STATE, bookmarks: {}, meta: { ...TEST_STATE.meta, total: 0 } };
     const storageGet = vi.fn()
@@ -780,6 +814,90 @@ describe('bookmark card injection', () => {
 
     expect(fixture.document.getElementById('xbi-card')).toBe(card);
     expect(fixture.storageGet).toHaveBeenCalledOnce();
+  });
+
+  it('re-rolls to a different bookmark in place without clearing state', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const twoState = {
+      ...TEST_STATE,
+      bookmarks: {
+        '1806': TEST_STATE.bookmarks['1806'],
+        '1807': {
+          id: '1807',
+          url: 'https://x.com/second/status/1807',
+          text: 'A second saved post.',
+          author: 'Second Author',
+          handle: '@second',
+          avatar: '',
+          createdAt: '2026-06-22T00:00:00Z',
+          media: [],
+          saveRank: 2,
+        },
+      },
+      meta: { ...TEST_STATE.meta, total: 2 },
+    };
+    const fixture = await loadContent({ storageGet: vi.fn().mockResolvedValue(twoState) });
+    const first = fixture.document.getElementById('xbi-card');
+    const reroll = first.findAll('button').find((button) => button.className === 'xbi-reroll');
+
+    await reroll.eventListeners.get('click')();
+    const second = fixture.document.getElementById('xbi-card');
+
+    expect(second).not.toBe(first);
+    expect(fixture.timeline.children[0]).toBe(second);
+    expect(second.findAll('strong').some((node) => node.textContent === 'Second Author')).toBe(true);
+    expect(fixture.body.querySelectorAll('#xbi-card')).toHaveLength(1);
+    expect(fixture.sendMessage).not.toHaveBeenCalled();
+    expect(fixture.document.activeElement.className).toBe('xbi-reroll');
+    expect(second.querySelector('.xbi-reroll')).toBe(fixture.document.activeElement);
+  });
+
+  it('does not resurrect a card when the visit changes mid re-roll', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    let releaseReroll;
+    const rerollLoad = new Promise((resolve) => { releaseReroll = resolve; });
+    const twoState = {
+      ...TEST_STATE,
+      bookmarks: {
+        '1806': TEST_STATE.bookmarks['1806'],
+        '1807': {
+          id: '1807',
+          url: 'https://x.com/second/status/1807',
+          text: 'A second saved post.',
+          author: 'Second Author',
+          handle: '@second',
+          avatar: '',
+          createdAt: '2026-06-22T00:00:00Z',
+          media: [],
+          saveRank: 2,
+        },
+      },
+      meta: { ...TEST_STATE.meta, total: 2 },
+    };
+    const storageGet = vi.fn()
+      .mockResolvedValueOnce(twoState)
+      .mockReturnValueOnce(rerollLoad)
+      .mockResolvedValue(twoState);
+    const fixture = await loadContent({ storageGet });
+    const first = fixture.document.getElementById('xbi-card');
+    const reroll = first.findAll('button').find((button) => button.className === 'xbi-reroll');
+
+    const clickPromise = reroll.eventListeners.get('click')();
+    await fixture.flush();
+
+    fixture.location.pathname = '/profile';
+    await fixture.interval();
+    fixture.location.pathname = '/home';
+    await fixture.interval();
+    const afterNav = fixture.document.getElementById('xbi-card');
+
+    releaseReroll(twoState);
+    await clickPromise;
+    await fixture.flush();
+
+    expect(afterNav).not.toBe(first);
+    expect(fixture.document.getElementById('xbi-card')).toBe(afterNav);
+    expect(fixture.body.querySelectorAll('#xbi-card')).toHaveLength(1);
   });
 
   it('treats declined delete confirmation as explicit cancellation', async () => {

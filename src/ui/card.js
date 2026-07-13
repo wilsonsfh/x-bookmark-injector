@@ -98,10 +98,78 @@ const CARD_CSS = `
   border-radius: var(--xbi-radius-media);
   object-fit: cover;
 }
+#${CARD_ID} .xbi-link-card {
+  display: block;
+  margin: var(--xbi-space-1) 0 var(--xbi-space-3);
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: var(--xbi-radius-media);
+  overflow: hidden;
+}
+#${CARD_ID} .xbi-link-card-image {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: cover;
+}
+#${CARD_ID} .xbi-link-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--xbi-space-2) var(--xbi-space-3);
+}
+#${CARD_ID} .xbi-link-card-domain {
+  color: color-mix(in srgb, currentColor 60%, transparent);
+  font-size: var(--xbi-text-label);
+  overflow-wrap: anywhere;
+}
+#${CARD_ID} .xbi-link-card-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 #${CARD_ID} .xbi-status { margin: var(--xbi-space-2) 0 0; font-size: var(--xbi-text-sm); }
 #${CARD_ID} .xbi-status[hidden] { display: none; }
+#${CARD_ID} .xbi-quoted {
+  margin: var(--xbi-space-1) 0 var(--xbi-space-2) calc(var(--xbi-avatar-size) + var(--xbi-space-3));
+}
+#${CARD_ID} .xbi-quoted[hidden] { display: none; }
+#${CARD_ID} .xbi-quoted-link {
+  display: block;
+  padding: var(--xbi-space-2) var(--xbi-space-3);
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: var(--xbi-radius-media);
+  color: inherit;
+  text-decoration: none;
+}
+#${CARD_ID} .xbi-quoted-link:hover { background: color-mix(in srgb, currentColor 4%, transparent); }
+#${CARD_ID} .xbi-quoted-link:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
+#${CARD_ID} .xbi-quoted-head { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 2px; }
+#${CARD_ID} .xbi-quoted-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+#${CARD_ID} .xbi-quoted-media {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  margin-top: var(--xbi-space-2);
+  border-radius: 12px;
+  object-fit: cover;
+}
 #${CARD_ID} .xbi-footer { margin-left: calc(var(--xbi-avatar-size) + var(--xbi-space-3)); }
-#${CARD_ID} .xbi-expand {
+#${CARD_ID} .xbi-meta-controls { display: flex; flex-wrap: wrap; gap: var(--xbi-space-3); }
+#${CARD_ID} .xbi-meta-controls:empty { display: none; }
+#${CARD_ID} .xbi-expand,
+#${CARD_ID} .xbi-quote-toggle,
+#${CARD_ID} .xbi-reroll {
   min-height: 28px;
   padding: 0;
   border: 0;
@@ -112,7 +180,10 @@ const CARD_CSS = `
   font-weight: 600;
   cursor: pointer;
 }
-#${CARD_ID} .xbi-expand:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
+#${CARD_ID} .xbi-expand:focus-visible,
+#${CARD_ID} .xbi-quote-toggle:focus-visible,
+#${CARD_ID} .xbi-reroll:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
+#${CARD_ID} .xbi-reroll:disabled { opacity: .55; cursor: wait; }
 #${CARD_ID} .xbi-utility {
   flex-wrap: wrap;
   margin-top: var(--xbi-space-2);
@@ -248,6 +319,67 @@ function buildEngagement(engagement) {
   return row.children.length > 0 ? row : null;
 }
 
+// A native-style link/article preview (title, domain, thumbnail) shown instead of
+// a bare t.co shortlink. It is a non-link element, so it sits inside the body link
+// without nesting an anchor and opens the bookmarked status like the rest of the body.
+function buildLinkPreview(link) {
+  if (!link || typeof link !== 'object') return null;
+  const title = typeof link.title === 'string' ? link.title.trim() : '';
+  const domain = typeof link.domain === 'string' ? link.domain.trim() : '';
+  const image = trustedUrl(link.image, IMAGE_HOSTS);
+  if (!title && !domain && !image) return null;
+
+  const card = node('div', null, 'xbi-link-card');
+  if (image) {
+    const preview = node('img', null, 'xbi-link-card-image');
+    preview.src = image;
+    preview.alt = '';
+    preview.loading = 'lazy';
+    card.append(preview);
+  }
+  const body = node('div', null, 'xbi-link-card-body');
+  if (domain) body.append(node('span', domain, 'xbi-link-card-domain'));
+  if (title) body.append(node('span', title, 'xbi-link-card-title'));
+  card.append(body);
+  return card;
+}
+
+function buildQuoted(quoted) {
+  if (!quoted || typeof quoted !== 'object') return null;
+  const hasText = typeof quoted.text === 'string' && quoted.text.trim();
+  const mediaUrl = trustedUrl(quoted.media?.[0]?.url, IMAGE_HOSTS);
+  if (!hasText && !mediaUrl) return null;
+
+  const section = node('section', null, 'xbi-quoted');
+  section.id = 'xbi-quoted-content';
+  section.hidden = true;
+  const url = trustedUrl(quoted.url, POST_HOSTS, /^\/[^/]+\/status\/\d+\/?$/);
+  const inner = node(url ? 'a' : 'div', null, 'xbi-quoted-link');
+  if (url) {
+    const who = quoted.handle || quoted.author || 'this account';
+    inner.setAttribute('aria-label', `Open quoted post by ${who} on X (opens in new tab)`);
+    inner.href = url;
+    inner.target = '_blank';
+    inner.rel = 'noopener noreferrer';
+  }
+  const head = node('div', null, 'xbi-quoted-head');
+  head.append(node('strong', quoted.author || quoted.handle || 'Quoted post'));
+  if (quoted.handle) head.append(node('span', quoted.handle, 'xbi-handle'));
+  inner.append(head);
+  if (hasText) inner.append(node('p', quoted.text, 'xbi-quoted-text'));
+  if (mediaUrl) {
+    const image = node('img', null, 'xbi-quoted-media');
+    image.src = mediaUrl;
+    image.alt = typeof quoted.media[0].alt === 'string' && quoted.media[0].alt.trim()
+      ? quoted.media[0].alt
+      : 'Quoted post media';
+    image.loading = 'lazy';
+    inner.append(image);
+  }
+  section.append(inner);
+  return section;
+}
+
 export function buildCardElement(bookmark, stats, handlers) {
   const meta = formatCardMeta(bookmark, stats.left);
   const card = node('article');
@@ -299,11 +431,15 @@ export function buildCardElement(bookmark, stats, handlers) {
     meta.posted.startsWith('Posted ') ? meta.posted.slice(7) : meta.posted,
     'xbi-posted',
   ));
+  const hasText = typeof bookmark.text === 'string' && bookmark.text.trim().length > 0;
   const text = node('p', bookmark.text, 'xbi-text');
   text.id = 'xbi-text-content';
-  const isLongPost = typeof bookmark.text === 'string' && Array.from(bookmark.text).length > 320;
+  const isLongPost = hasText && Array.from(bookmark.text).length > 320;
   if (isLongPost) text.className = 'xbi-text xbi-text-collapsed';
-  main.append(provenance, authorRow, text);
+  main.append(provenance, authorRow);
+  if (hasText) main.append(text);
+  const linkPreview = buildLinkPreview(bookmark.link);
+  if (linkPreview) main.append(linkPreview);
 
   const firstMedia = bookmark.media?.[0];
   const mediaUrl = trustedUrl(firstMedia?.url, IMAGE_HOSTS);
@@ -325,7 +461,11 @@ export function buildCardElement(bookmark, stats, handlers) {
   status.setAttribute('aria-live', 'polite');
   status.hidden = true;
 
+  const quotedSection = buildQuoted(bookmark.quoted);
+
   const footer = node('div', null, 'xbi-footer');
+  const metaControls = node('div', null, 'xbi-meta-controls');
+  footer.append(metaControls);
   let expand = null;
   const ensureExpand = () => {
     if (expand) return expand;
@@ -339,11 +479,24 @@ export function buildCardElement(bookmark, stats, handlers) {
       expand.textContent = expanded ? 'Read more' : 'Show less';
       text.className = expanded ? 'xbi-text xbi-text-collapsed' : 'xbi-text';
     });
-    if (footer.children.length > 0) footer.insertBefore(expand, footer.children[0]);
-    else footer.append(expand);
+    if (metaControls.children.length > 0) metaControls.insertBefore(expand, metaControls.children[0]);
+    else metaControls.append(expand);
     return expand;
   };
   if (isLongPost) ensureExpand();
+  if (quotedSection) {
+    const quoteToggle = node('button', 'Show quoted post', 'xbi-quote-toggle');
+    quoteToggle.type = 'button';
+    quoteToggle.setAttribute('aria-controls', quotedSection.id);
+    quoteToggle.setAttribute('aria-expanded', 'false');
+    quoteToggle.addEventListener('click', () => {
+      const shown = quoteToggle.getAttribute('aria-expanded') === 'true';
+      quoteToggle.setAttribute('aria-expanded', String(!shown));
+      quoteToggle.textContent = shown ? 'Show quoted post' : 'Hide quoted post';
+      quotedSection.hidden = shown;
+    });
+    metaControls.append(quoteToggle);
+  }
   const utility = node('div', null, 'xbi-utility');
   if (postUrl) {
     const link = node('a', 'Open on X ↗', 'xbi-post-link');
@@ -355,9 +508,11 @@ export function buildCardElement(bookmark, stats, handlers) {
   }
   const keepButton = action('Keep for later', false);
   const doneButton = action('Done · Remove', true);
+  // Keep, Done, and re-roll share ONE lock: only one interaction can be in
+  // flight at a time, so a re-roll cannot race a Keep/Done (or vice versa).
   const controls = [keepButton, doneButton];
   let actionPending = false;
-  const runAction = async (handler) => {
+  const runAction = async (handler, fallbackMessage) => {
     if (actionPending) return;
     actionPending = true;
     card.setAttribute('aria-busy', 'true');
@@ -369,25 +524,40 @@ export function buildCardElement(bookmark, stats, handlers) {
       if (result?.ok !== true && result?.cancelled !== true) {
         status.textContent = result?.ok === false && typeof result.error === 'string'
           ? result.error
-          : 'Could not update this bookmark. Try again.';
+          : fallbackMessage;
         status.hidden = false;
       }
     } catch {
-      status.textContent = 'Could not update this bookmark. Try again.';
+      status.textContent = fallbackMessage;
       status.hidden = false;
     } finally {
+      // A successful re-roll detaches this card; re-enabling its now-orphaned
+      // controls is harmless, and the fresh replacement card has its own lock.
       actionPending = false;
       card.removeAttribute('aria-busy');
       controls.forEach((button) => { button.disabled = false; });
     }
   };
-  keepButton.addEventListener('click', () => runAction(handlers.onKeep));
-  doneButton.addEventListener('click', () => runAction(handlers.onDone));
+  const ACTION_FALLBACK = 'Could not update this bookmark. Try again.';
+  keepButton.addEventListener('click', () => runAction(handlers.onKeep, ACTION_FALLBACK));
+  doneButton.addEventListener('click', () => runAction(handlers.onDone, ACTION_FALLBACK));
   utility.append(keepButton, doneButton);
   postBody.append(avatarSlot, main);
   footer.append(status, utility);
-  card.append(postBody, footer);
-  if (typeof ResizeObserver === 'function') {
+
+  if (typeof handlers.onReroll === 'function') {
+    const rerollRow = node('div', null, 'xbi-meta-controls');
+    const reroll = node('button', 'Show another bookmark', 'xbi-reroll');
+    reroll.type = 'button';
+    controls.push(reroll);
+    reroll.addEventListener('click', () => runAction(handlers.onReroll, 'No other bookmark to show right now.'));
+    rerollRow.append(reroll);
+    footer.append(rerollRow);
+  }
+
+  if (quotedSection) card.append(postBody, quotedSection, footer);
+  else card.append(postBody, footer);
+  if (typeof ResizeObserver === 'function' && hasText) {
     const observer = new ResizeObserver(() => {
       if (!card.isConnected || expand?.getAttribute('aria-expanded') === 'true') return;
       text.className = 'xbi-text xbi-text-collapsed';

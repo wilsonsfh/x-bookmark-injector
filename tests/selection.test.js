@@ -9,6 +9,12 @@ describe('pickBookmark', () => {
     expect(pickBookmark(bm, {}, { rng: () => 0.8 }).id).toBe('c');
   });
 
+  it('skips excluded ids and returns null once every candidate is excluded', () => {
+    expect(pickBookmark(bm, {}, { excludeIds: new Set(['a']), rng: first }).id).toBe('b');
+    expect(pickBookmark(bm, {}, { excludeIds: ['a', 'b'], rng: first }).id).toBe('c');
+    expect(pickBookmark(bm, {}, { excludeIds: ['a', 'b', 'c'], rng: first })).toBeNull();
+  });
+
   it('never returns a done item', () => {
     const cleared = { a: { action: 'done' } };
     const got = pickBookmark(bm, cleared, { rng: first });

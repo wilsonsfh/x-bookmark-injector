@@ -5,6 +5,7 @@ import {
   parseXGraphqlUrl,
   validatePageRequest,
 } from './bridge.js';
+import { OPERATIONS } from './x-api/constants.js';
 
 export const MAIN_REQUEST_TIMEOUT_MS = 15_000;
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -61,6 +62,13 @@ export function installInpageBridge(scope, {
     });
     if (capture) {
       scope.postMessage({ source: PAGE_SOURCE, type: 'XBI_AUTH_CAPTURE', capture }, '*');
+    }
+    // A user adding/removing a bookmark on X fires CreateBookmark/DeleteBookmark
+    // through the page's own fetch/XHR. Signal it so the extension can auto-sync.
+    // The extension's own mutations use the unwrapped fetch, so they never loop here.
+    const parsed = parseXGraphqlUrl(url);
+    if (parsed && (parsed.operation === OPERATIONS.CREATE || parsed.operation === OPERATIONS.DELETE)) {
+      scope.postMessage({ source: PAGE_SOURCE, type: 'XBI_BOOKMARK_CHANGED', operation: parsed.operation }, '*');
     }
   }
 

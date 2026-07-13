@@ -12,7 +12,11 @@ The 2026-07-12 live run confirmed that the unpacked extension loads, captures cu
 - Looks like a normal X post rather than a separate dashboard card.
 - Shows stable save-order position (`#k of N`), the post's published date, and remaining count.
 - Renders current X author/avatar fields, Note Tweet text, first media item, alt text, and available engagement counts.
+- Shows a native link/article preview (title, domain, thumbnail) instead of a bare `t.co` shortlink, and rewrites inline links to their readable display URL.
+- Automatically syncs after you add or remove a bookmark on X (debounced ~15s, at most once per 30 minutes), so new bookmarks are captured without opening the popup; a 12-hour on-Home refresh also catches bookmarks you changed on another device (e.g. mobile).
 - Clamps long posts to six rendered lines with `Read more` / `Show less`.
+- Expands a bookmarked quote tweet's quoted post inline with `Show quoted post`, as its own link to the quoted status.
+- Re-rolls a different eligible bookmark into the same card with `Show another bookmark`, without leaving Home.
 - Opens the exact bookmarked status from the full non-action body or `Open on X` control.
 - Keeps a bookmark locally for later or removes it from X with a bounded Undo/reconciliation path.
 - Provides a popup for sync status, counts, oldest-first browsing, settings, and recovered Undo.
@@ -84,6 +88,8 @@ Runtime dependencies are deliberately zero; esbuild/Vitest/Vite are development-
 
 **Sync:** popup/content requests sync → background resolves a captured X tab → MAIN world executes paginated Bookmarks requests → every page is schema-validated → duplicate IDs are removed → ranks are assigned (`#1 = oldest`) → the cache is published only after the complete run succeeds. Failed, malformed, rate-limited, partial, or stale-query runs retain the previous cache.
 
+**Auto-sync:** the MAIN world detects a user-initiated `CreateBookmark`/`DeleteBookmark` (the extension's own mutations use the unwrapped fetch, so they never loop) → the content script debounces a background sync (~15s), never more often than a 30-minute minimum gap → the refreshed cache re-pins the card automatically. Timing is generous on purpose: a just-added bookmark does not need instant resurfacing (the card shows old backlog), so the sync only has to capture the change before a later reading session. This detector only sees same-device changes; a 12-hour on-Home staleness sync is the independent backstop that catches bookmarks you changed on **another device (e.g. mobile)**, which the desktop detector cannot observe.
+
 **Feed:** content detects `/home` with the **For You** tab selected → filters Done/reconciliation/cooling-down records → chooses through injected `Math.random` → builds one native post → keeps it first through timeline replacement without duplicating it.
 
 **Delete/Undo:** background persists a pre-mutation intent and bookmark snapshot → sends `DeleteBookmark` → accepts only the exact operation-specific success schema → publishes Done + a six-second Undo window. MV3 restarts, local/session storage failures, concurrent sync, and ambiguous 5xx/post-dispatch outcomes retain a truthful reconciliation/restore path. `CreateBookmark` success restores both X and local cache state.
@@ -96,6 +102,7 @@ Runtime dependencies are deliberately zero; esbuild/Vitest/Vite are development-
 | Request execution | MAIN-world constrained fetch | Service-worker cross-origin fetch | Reliable page cookies/session semantics, at the cost of a validated `postMessage` bridge |
 | Storage | Local-only extension state | Project backend/cloud sync | No server/telemetry/secrets service; state is profile-local and not multi-device |
 | Surfacing | Random eligible bookmark per Home load | Oldest-only, newest-only, every-N-post injection | Discovery stays fresh; chronological rank keeps the random choice legible |
+| Sync freshness | Event-driven auto-sync on same-device add/remove (debounce 15s, min 30-min gap) + a 12h on-Home staleness backstop | Sync on every add; short polling; manual-only | Captures your changes automatically without re-paginating the whole backlog per bookmark; the 12h backstop is the only path that catches other-device (e.g. mobile) changes, so it trades some cross-device freshness for far fewer API calls |
 | Card design | Zara-faithful native Option B | Hybrid rail/tint/chips; ultra-minimal text actions | Blends into the feed while retaining visible Keep/Remove actions; less visual separation from X content |
 | Long text | Six rendered-line clamp + measured overflow | Hard character cut; always full text; open-only | Preserves words/languages and feed rhythm, with a small ResizeObserver/toggle interaction |
 | Parsing | Strict allowlisted schema, fail closed | Permissive recursive extraction | Protects cache integrity but may require updates when X adds a new valid entry shape |
@@ -163,6 +170,19 @@ published date, text/media, engagement, then a compact `Open on X ↗` / `Keep f
 background, chip row or dashboard shell. Long posts clamp to six rendered lines;
 `Read more` expands in place and `Show less` collapses them. The whole non-action post
 body also opens the exact bookmarked X status for quotes, reposts and conversation context.
+
+When a bookmarked post is a shared link or an X Article whose text is just a `t.co`
+shortlink, the card renders a native link preview — thumbnail, domain and title (e.g.
+`posthog.com` · "Stop being the code review bottleneck") — instead of the opaque
+shortlink, and inline `t.co` links elsewhere are rewritten to their readable display URL.
+
+When a bookmark is a quote tweet, `Show quoted post` expands the one quoted post inline
+(author, text, first media) as its own separate link to the quoted status — it is a sibling
+of the main post link, never nested inside it. Only a single quote level is shown; a full
+reply thread is not reconstructed inline and still opens on X. `Show another bookmark`
+re-rolls a different eligible bookmark into the same card in place; it shares one interaction
+lock with Keep and `Done · Remove` so the controls cannot race, and its per-visit exclusions
+reset whenever you navigate.
 
 ## Actions
 

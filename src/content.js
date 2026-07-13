@@ -38,6 +38,11 @@ window.addEventListener('message', (event) => {
     return;
   }
 
+  if (message.type === 'XBI_BOOKMARK_CHANGED') {
+    scheduleAutoSync();
+    return;
+  }
+
   if (message.type === 'XBI_EXECUTE_RESULT' && typeof message.requestId === 'string') {
     const pending = pendingPageRequests.get(message.requestId);
     if (pending && validateExecutionResult(message, pending.operation)) {
@@ -46,6 +51,38 @@ window.addEventListener('message', (event) => {
     }
   }
 });
+
+// Debounce a burst of bookmark changes into one sync, and never auto-sync more
+// often than the minimum gap. A just-added bookmark does not need to be resurfaced
+// immediately (the card shows old backlog), so the gap is generous: it only has to
+// capture the change before a later reading session, not within seconds. This path
+// only sees same-device changes; the 12h on-Home staleness sync (maybeSync) is the
+// independent backstop that catches bookmarks changed on other devices (e.g. mobile).
+const AUTO_SYNC_DEBOUNCE_MS = 15_000;
+const AUTO_SYNC_MIN_GAP_MS = 30 * 60_000;
+let autoSyncTimer = null;
+
+function scheduleAutoSync(delay = AUTO_SYNC_DEBOUNCE_MS) {
+  if (autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(runAutoSync, delay);
+}
+
+async function runAutoSync() {
+  autoSyncTimer = null;
+  try {
+    const state = await loadSharedState();
+    if (state.meta.syncStatus === 'syncing') return;
+    const lastSync = state.meta.lastSync ? new Date(state.meta.lastSync).getTime() : 0;
+    const sinceLast = Number.isFinite(lastSync) && lastSync > 0 ? Date.now() - lastSync : Infinity;
+    if (sinceLast < AUTO_SYNC_MIN_GAP_MS) {
+      scheduleAutoSync(AUTO_SYNC_MIN_GAP_MS - sinceLast);
+      return;
+    }
+    await chrome.runtime.sendMessage({ type: 'XBI_SYNC' });
+  } catch {
+    // A later bookmark change or navigation retries without disrupting the feed.
+  }
+}
 
 function executeInPage(request, operation) {
   const requestId = crypto.randomUUID();
@@ -93,6 +130,7 @@ let visitCompleted = false;
 let homeVisit = 0;
 let currentCard = null;
 let visitModel = null;
+let rerolledIds = new Set();
 let lastPath = location.pathname;
 let mutationFramePending = false;
 let stateLoadInFlight = null;
@@ -268,41 +306,67 @@ async function pinRandomCard() {
         },
       };
     }
-    const { bookmark, settings, stats } = visitModel;
+    const { settings } = visitModel;
 
-    let card;
-    const dismiss = () => {
-      if (currentCard !== card || homeVisit !== visit) return false;
-      card.remove();
-      currentCard = null;
-      return true;
+    const makeHandlers = (activeBookmark, getCard) => {
+      const dismiss = () => {
+        const card = getCard();
+        if (currentCard !== card || homeVisit !== visit) return false;
+        card.remove();
+        currentCard = null;
+        return true;
+      };
+      const runAction = async (action) => {
+        const result = await chrome.runtime.sendMessage({
+          type: 'XBI_ACTION',
+          action,
+          tweetId: activeBookmark.id,
+        });
+        const validSuccess = result?.ok === true
+          && (action !== 'done'
+            || (Number.isFinite(result.undoUntil) && result.undoUntil > Date.now()));
+        if (!validSuccess) {
+          return result?.ok === false && typeof result.error === 'string'
+            ? result
+            : { ok: false };
+        }
+        const dismissed = dismiss();
+        if (action === 'done') {
+          showUndoToast(activeBookmark.id, result.undoUntil, result.reconciliationPending === true);
+        } else if (dismissed) {
+          focusFeed();
+        }
+        return result;
+      };
+      const reroll = async () => {
+        const activeCard = getCard();
+        const state = await loadSharedState();
+        // Bail if the visit changed or this card was dismissed/replaced while we
+        // were awaiting state, so a stale re-roll never resurrects a gone card.
+        if (visit !== homeVisit || currentCard !== activeCard || !activeCard.parentElement) {
+          return { ok: true };
+        }
+        rerolledIds.add(activeBookmark.id);
+        const next = pickBookmark(state.bookmarks, state.cleared, {
+          cooldownHours: settings.keepCooldownHours,
+          excludeIds: rerolledIds,
+        });
+        if (!next) return { ok: false };
+        visitModel.bookmark = next;
+        visitModel.stats = {
+          total: Object.keys(state.bookmarks).length,
+          left: countLeft(state.bookmarks, state.cleared),
+        };
+        renderCard(next, visitModel.stats, activeCard);
+        return { ok: true };
+      };
+      return { runAction, reroll };
     };
-    const runAction = async (action) => {
-      const result = await chrome.runtime.sendMessage({
-        type: 'XBI_ACTION',
-        action,
-        tweetId: bookmark.id,
-      });
-      const validSuccess = result?.ok === true
-        && (action !== 'done'
-          || (Number.isFinite(result.undoUntil) && result.undoUntil > Date.now()));
-      if (!validSuccess) {
-        return result?.ok === false && typeof result.error === 'string'
-          ? result
-          : { ok: false };
-      }
-      const dismissed = dismiss();
-      if (action === 'done') {
-        showUndoToast(bookmark.id, result.undoUntil, result.reconciliationPending === true);
-      } else if (dismissed) {
-        focusFeed();
-      }
-      return result;
-    };
-    card = buildCardElement(
-      bookmark,
-      stats,
-      {
+
+    const renderCard = (activeBookmark, stats, replaceTarget = null) => {
+      let card;
+      const { runAction, reroll } = makeHandlers(activeBookmark, () => card);
+      card = buildCardElement(activeBookmark, stats, {
         onKeep: () => runAction('keep'),
         onDone: async () => {
           if (settings.confirmRealDelete && !settings.deleteConfirmed) {
@@ -311,12 +375,22 @@ async function pinRandomCard() {
           }
           return runAction('done');
         },
-      },
-    );
-    currentCard = card;
-    visitCompleted = true;
+        onReroll: reroll,
+      });
+      if (replaceTarget && replaceTarget.parentElement) {
+        replaceTarget.parentElement.replaceChild(card, replaceTarget);
+        currentCard = card;
+        // Keep keyboard focus on the equivalent control after an in-place swap.
+        card.querySelector('.xbi-reroll')?.focus?.();
+      } else {
+        currentCard = card;
+        if (isHome()) positionCard();
+      }
+      return card;
+    };
 
-    if (isHome()) positionCard();
+    renderCard(visitModel.bookmark, visitModel.stats);
+    visitCompleted = true;
   } catch (error) {
     if (visit === homeVisit) console.warn('[xbi] unable to render bookmark card', error);
   } finally {
@@ -348,6 +422,7 @@ setInterval(() => {
     removeCard();
     currentCard = null;
     visitModel = null;
+    rerolledIds = new Set();
     stateLoadInFlight = null;
     loadInFlight = false;
     visitCompleted = false;
@@ -366,12 +441,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
     removeCard();
     currentCard = null;
     visitModel = null;
+    rerolledIds = new Set();
     stateLoadInFlight = null;
     visitCompleted = false;
     void pinRandomCard();
     return;
   }
   if (area === 'local' && changes.bookmarks && !visitModel) {
+    rerolledIds = new Set();
     visitCompleted = false;
     void pinRandomCard();
   }

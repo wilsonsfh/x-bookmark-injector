@@ -30,7 +30,7 @@ describe('applyDefaults', () => {
         confirmRealDelete: true,
         deleteConfirmed: false,
         keepCooldownHours: 72,
-        syncEveryHours: 24,
+        syncEveryHours: 12,
       },
     });
   });
@@ -65,7 +65,7 @@ describe('applyDefaults', () => {
 
     expect(state.bookmarks).toEqual({ one: { id: 'one' } });
     expect(state.cleared).toEqual({ two: { action: 'keep' } });
-    expect(state.settings).toMatchObject({ keepCooldownHours: 24, syncEveryHours: 24 });
+    expect(state.settings).toMatchObject({ keepCooldownHours: 24, syncEveryHours: 12 });
     expect(state.settings).not.toHaveProperty('cardStyle');
     expect(state.meta).toMatchObject({ total: 4, syncStatus: 'idle' });
     expect(state.auth).toEqual({ queryIds: { Bookmarks: 'read123' } });

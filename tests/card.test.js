@@ -468,6 +468,171 @@ describe('buildCardElement', () => {
     expect(card.findAll('button')).toHaveLength(2);
   });
 
+  it('renders a link-card preview instead of a bare shortlink, with a trusted thumbnail', () => {
+    installDom();
+    const card = buildCardElement(
+      {
+        author: 'PostHog',
+        handle: '@posthog',
+        media: [],
+        saveRank: 33,
+        text: '',
+        url: 'https://x.com/posthog/status/1806',
+        link: {
+          title: 'Stop being the code review bottleneck',
+          domain: 'posthog.com',
+          image: 'https://pbs.twimg.com/card_img/1.jpg',
+        },
+      },
+      { total: 34, left: 34 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const bodyLink = card.children.find((element) => element.className === 'xbi-post-body-link');
+    const preview = bodyLink.findAll('div').find((element) => element.className === 'xbi-link-card');
+    const title = preview.findAll('span').find((span) => span.className === 'xbi-link-card-title');
+    const domain = preview.findAll('span').find((span) => span.className === 'xbi-link-card-domain');
+    const image = preview.findAll('img').find((img) => img.className === 'xbi-link-card-image');
+
+    expect(title.textContent).toBe('Stop being the code review bottleneck');
+    expect(domain.textContent).toBe('posthog.com');
+    expect(image.src).toBe('https://pbs.twimg.com/card_img/1.jpg');
+    expect(preview.tagName).toBe('DIV');
+    expect(preview.findAll('a')).toHaveLength(0);
+    expect(bodyLink.findAll('p').some((p) => p.className === 'xbi-text')).toBe(false);
+  });
+
+  it('omits an untrusted link-card thumbnail but keeps the title and domain', () => {
+    installDom();
+    const card = buildCardElement(
+      {
+        author: 'PostHog',
+        media: [],
+        saveRank: 1,
+        text: 'read this',
+        link: { title: 'A title', domain: 'evil.test', image: 'https://evil.test/x.jpg' },
+      },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const preview = card.findAll('div').find((element) => element.className === 'xbi-link-card');
+
+    expect(preview.findAll('img')).toHaveLength(0);
+    expect(preview.findAll('span').some((span) => span.textContent === 'A title')).toBe(true);
+  });
+
+  it('renders no link-card preview when the bookmark has no link', () => {
+    installDom();
+    const card = buildCardElement(
+      { author: 'A', media: [], saveRank: 1, text: 'plain post' },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+
+    expect(card.findAll('div').some((element) => element.className === 'xbi-link-card')).toBe(false);
+  });
+
+  it('renders an expandable quoted post linked to the quoted status', () => {
+    installDom();
+    const card = buildCardElement(
+      {
+        author: 'Brian Chew',
+        handle: '@brianchew',
+        media: [],
+        saveRank: 1,
+        text: 'great read!',
+        url: 'https://x.com/brianchew/status/2001',
+        quoted: {
+          author: 'Origin Author',
+          handle: '@origin',
+          media: [],
+          text: 'the original thread everyone is quoting',
+          url: 'https://x.com/origin/status/1900',
+        },
+      },
+      { total: 34, left: 34 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+    const section = card.children.find((element) => element.className === 'xbi-quoted');
+    const toggle = card.findAll('button').find((button) => button.className === 'xbi-quote-toggle');
+    const bodyLink = card.children.find((element) => element.className === 'xbi-post-body-link');
+    const quotedLink = section.findAll('a')[0];
+
+    expect(section.hidden).toBe(true);
+    expect(bodyLink.findAll('section')).toHaveLength(0);
+    expect(toggle.textContent).toBe('Show quoted post');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-controls')).toBe(section.id);
+    expect(quotedLink.href).toBe('https://x.com/origin/status/1900');
+    expect(quotedLink.findAll('p').some((p) => p.textContent === 'the original thread everyone is quoting')).toBe(true);
+
+    toggle.eventListeners.get('click')();
+    expect(section.hidden).toBe(false);
+    expect(toggle.textContent).toBe('Hide quoted post');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('invokes onReroll from the Show another bookmark control', async () => {
+    installDom();
+    const onReroll = vi.fn().mockResolvedValue({ ok: true });
+    const card = buildCardElement(
+      { author: 'A', handle: '@a', media: [], saveRank: 1, text: 'x', url: 'https://x.com/a/status/1' },
+      { total: 2, left: 2 },
+      { onKeep: vi.fn(), onDone: vi.fn(), onReroll },
+    );
+    const reroll = card.findAll('button').find((button) => button.className === 'xbi-reroll');
+
+    expect(reroll.textContent).toBe('Show another bookmark');
+    await reroll.eventListeners.get('click')();
+    expect(onReroll).toHaveBeenCalledOnce();
+  });
+
+  it('shares one lock across Keep, Done, and re-roll so they cannot race', async () => {
+    installDom();
+    let resolveReroll;
+    const onReroll = vi.fn(() => new Promise((resolve) => { resolveReroll = resolve; }));
+    const card = buildCardElement(
+      { author: 'A', handle: '@a', media: [], saveRank: 1, text: 'x', url: 'https://x.com/a/status/1' },
+      { total: 2, left: 2 },
+      { onKeep: vi.fn(), onDone: vi.fn(), onReroll },
+    );
+    const reroll = card.findAll('button').find((button) => button.className === 'xbi-reroll');
+    const [keep, done] = card.findAll('button').filter((button) => button.className.includes('xbi-action'));
+
+    const pending = reroll.eventListeners.get('click')();
+    expect(keep.disabled).toBe(true);
+    expect(done.disabled).toBe(true);
+    expect(reroll.disabled).toBe(true);
+
+    resolveReroll({ ok: true });
+    await pending;
+  });
+
+  it('shows a status when no other bookmark is available to reroll', async () => {
+    installDom();
+    const card = buildCardElement(
+      { author: 'A', media: [], saveRank: 1, text: 'x' },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn(), onReroll: vi.fn().mockResolvedValue({ ok: false }) },
+    );
+    const reroll = card.findAll('button').find((button) => button.className === 'xbi-reroll');
+    const status = card.findAll('p').find((p) => p.className === 'xbi-status');
+
+    await reroll.eventListeners.get('click')();
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toBe('No other bookmark to show right now.');
+  });
+
+  it('omits the reroll control when no onReroll handler is provided', () => {
+    installDom();
+    const card = buildCardElement(
+      { author: 'A', media: [], saveRank: 1, text: 'x' },
+      { total: 1, left: 1 },
+      { onKeep: vi.fn(), onDone: vi.fn() },
+    );
+
+    expect(card.findAll('button').some((button) => button.className === 'xbi-reroll')).toBe(false);
+  });
+
   it('renders a visible keyboard-accessible link for a valid X post URL', () => {
     installDom();
     const card = buildCardElement(

@@ -92,6 +92,66 @@ describe('MAIN-world bridge', () => {
     expect(xhr).not.toHaveProperty('__xbi');
   });
 
+  it('signals a bookmark change on user CreateBookmark/DeleteBookmark for auto-sync', async () => {
+    const { scope } = makeScope();
+
+    await scope.fetch('https://x.com/i/api/graphql/create123/CreateBookmark', {
+      method: 'POST',
+      headers: { authorization: 'Bearer session', 'x-csrf-token': 'csrf' },
+      body: '{"variables":{"tweet_id":"1"}}',
+    });
+    const xhr = new FakeXMLHttpRequest();
+    xhr.open('POST', 'https://x.com/i/api/graphql/delete123/DeleteBookmark');
+    xhr.setRequestHeader('authorization', 'Bearer session');
+    xhr.setRequestHeader('x-csrf-token', 'csrf');
+    xhr.send('{"variables":{"tweet_id":"1"}}');
+
+    const changes = scope.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === 'XBI_BOOKMARK_CHANGED');
+    expect(changes).toEqual([
+      { source: PAGE_SOURCE, type: 'XBI_BOOKMARK_CHANGED', operation: 'CreateBookmark' },
+      { source: PAGE_SOURCE, type: 'XBI_BOOKMARK_CHANGED', operation: 'DeleteBookmark' },
+    ]);
+  });
+
+  it('does not signal a bookmark change for a Bookmarks read', async () => {
+    const { scope } = makeScope();
+
+    await scope.fetch('https://x.com/i/api/graphql/read123/Bookmarks?variables=%7B%7D', {
+      headers: { authorization: 'Bearer session', 'x-csrf-token': 'csrf' },
+    });
+
+    expect(scope.postMessage.mock.calls.some(([message]) => message.type === 'XBI_BOOKMARK_CHANGED')).toBe(false);
+  });
+
+  it('does not signal a bookmark change for extension-executed mutations', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://x.com/i/api/graphql/delete123/DeleteBookmark',
+      text: vi.fn().mockResolvedValue('{"data":{}}'),
+    });
+    const { message, scope } = makeScope(fetch);
+
+    await message({
+      source: EXT_SOURCE,
+      type: 'XBI_EXECUTE',
+      requestId: 'exec-delete',
+      request: {
+        url: 'https://x.com/i/api/graphql/delete123/DeleteBookmark',
+        init: {
+          method: 'POST',
+          credentials: 'include',
+          headers: { authorization: 'Bearer session', 'x-csrf-token': 'csrf-session' },
+          body: '{"variables":{"tweet_id":"1"}}',
+        },
+      },
+    });
+
+    expect(scope.postMessage.mock.calls.some(([message]) => message.type === 'XBI_BOOKMARK_CHANGED')).toBe(false);
+  });
+
   it('does not disrupt the original fetch when capture parsing fails', async () => {
     const fetch = vi.fn().mockResolvedValue('original-result');
     class ThrowingHeaders {
