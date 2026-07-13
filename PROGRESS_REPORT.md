@@ -5,7 +5,8 @@
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Native Option B read/sync loop | Live accepted | Author/avatar, pagination, first-position card, Read more/Show less and exact-status navigation passed in logged-in X |
-| Quoted/re-roll, link preview, auto-sync | Pushed; live verification pending | Committed `14d833b`; passes gate but owner has not yet reloaded `dist/` and verified on live X |
+| Quoted/re-roll, link preview | Live accepted | Owner verified quoted expand, re-roll and link/article preview in logged-in X on 2026-07-13 (commit `14d833b`) |
+| Auto-sync + 12h cross-device backstop | Shipped; live timing pending | Unit-tested and pushed; the 30-min gap and 12h mobile backstop were not instantly verifiable in-session |
 | Automated verification | Green | 313/313 tests, build passed, audit 0, diff check passed |
 | Source publication | Shipped | Public `wilsonsfh/x-bookmark-injector`, default branch `main`; all commits attributed to GitHub user `wilsonsfh` |
 | Destructive actions | Manual gate open | Keep, real Delete, Undo and failure paths remain unchecked in `docs/E2E_CHECKLIST.md` |
@@ -29,7 +30,10 @@
 - Hardened after review: one shared Keep/Done/re-roll lock, a stale-re-roll ownership
   guard, isolated quoted/card/article parsing (fail closed), and focus restoration.
 - Verified 313/313 tests, production build, `npm audit` 0 vulnerabilities, and
-  `git diff --check` before pushing. New card/sync behaviors await owner live E2E.
+  `git diff --check` before pushing.
+- Owner live-accepted the quoted-post expand, re-roll, and link/article preview in
+  logged-in X after a fresh sync. Timing-based auto-sync (30-min gap) and the 12h
+  cross-device backstop remain unit-tested only (not instantly verifiable in-session).
 
 ### 2026-07-12
 
