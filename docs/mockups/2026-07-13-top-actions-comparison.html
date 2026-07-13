@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>X Bookmark Injector — Actions-at-top comparison 2026-07-13</title>
+<style>
+:root{
+  --xbi-accent:#1d9bf0;
+  --xbi-link:color-mix(in srgb, var(--xbi-accent) 65%, #e7e9ea);
+  --xbi-on-accent:#0f1419;
+  --xbi-s1:4px; --xbi-s2:8px; --xbi-s3:12px; --xbi-s4:16px;
+  --xbi-label:13px; --xbi-base:15px; --xbi-sm:12px;
+  --xbi-avatar:40px; --xbi-target:36px; --xbi-pill:999px;
+  --bg:#000; --line:#2f3336; --text:#e7e9ea; --muted:#71767b;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:var(--text);font:var(--xbi-base)/1.4 var(--font);padding:28px 16px 80px}
+h1{font-size:20px;font-weight:800;margin-bottom:4px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:960px}
+.sub code{background:#16181c;padding:1px 5px;border-radius:5px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:1180px;margin:22px auto 0}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.col-head h2{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.tag{font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px}
+.t-cur{background:#26292e;color:#a7adb4}.t-a{background:#1e2a3a;color:#5cb8f5}.t-c{background:#1e2d14;color:#7ed44a}
+.rec{color:#7ed44a;font-weight:800}
+.note{font-size:12px;color:var(--muted);margin:4px 0 12px;min-height:48px}
+.feed{background:var(--bg);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+
+/* ---- shared real card tokens ---- */
+.xbi-card{padding:var(--xbi-s3) var(--xbi-s4);border-bottom:1px solid color-mix(in srgb,var(--text) 18%,transparent);position:relative}
+.xbi-post-body{display:grid;grid-template-columns:var(--xbi-avatar) minmax(0,1fr);gap:var(--xbi-s3);color:inherit;text-decoration:none}
+.xbi-avatar{width:var(--xbi-avatar);height:var(--xbi-avatar);border-radius:50%;display:block;background:linear-gradient(135deg,#7a5cff,#1d9bf0)}
+.xbi-main{min-width:0}
+.xbi-provenance{margin:0 0 var(--xbi-s1);color:color-mix(in srgb,var(--text) 66%,transparent);font-size:var(--xbi-label)}
+.xbi-author{display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-width:0}
+.xbi-handle,.xbi-posted,.xbi-sep{color:color-mix(in srgb,var(--text) 58%,transparent)}
+.xbi-text{margin:var(--xbi-s1) 0 var(--xbi-s2);white-space:pre-wrap}
+.xbi-engagement{display:flex;flex-wrap:wrap;gap:var(--xbi-s2) var(--xbi-s4);margin:var(--xbi-s2) 0;color:color-mix(in srgb,var(--text) 65%,transparent);font-size:var(--xbi-label)}
+.xbi-post-link,.xbi-action{display:inline-flex;min-height:var(--xbi-target);align-items:center;justify-content:center;padding:0 var(--xbi-s3);border:1px solid color-mix(in srgb,var(--text) 22%,transparent);border-radius:var(--xbi-pill);color:inherit;background:transparent;font:inherit;font-size:var(--xbi-label);font-weight:600;line-height:1;text-decoration:none;white-space:nowrap;cursor:pointer}
+.xbi-post-link{border-color:var(--xbi-accent);color:var(--xbi-link)}
+.xbi-action-primary{border-color:var(--xbi-accent);color:var(--xbi-on-accent);background:var(--xbi-accent)}
+.xbi-reroll{min-height:28px;border:0;background:transparent;color:var(--xbi-link);font:inherit;font-size:var(--xbi-label);font-weight:600;cursor:pointer}
+
+/* ===== CURRENT: actions in footer at the bottom ===== */
+.cur .xbi-footer{margin-left:calc(var(--xbi-avatar) + var(--xbi-s3))}
+.cur .xbi-utility{display:flex;flex-wrap:wrap;gap:var(--xbi-s2);margin-top:var(--xbi-s2)}
+.cur .xbi-meta-controls{margin-top:var(--xbi-s2)}
+
+/* ===== OPTION A: keep giant body-link, overlay actions top-right ===== */
+.a .xbi-actions{position:absolute;top:var(--xbi-s3);right:var(--xbi-s4);display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--xbi-s2);max-width:56%}
+.a .xbi-provenance,.a .xbi-author{padding-right:0} /* header is left of the overlay; body text is full width */
+.a .xbi-reroll{min-height:var(--xbi-target)}
+
+/* ===== OPTION C: real header — identity left, actions right (flex-wrap); body links below ===== */
+.c .xbi-header{display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--xbi-s2) var(--xbi-s3)}
+.c .xbi-id-row{display:grid;grid-template-columns:var(--xbi-avatar) minmax(0,1fr);gap:var(--xbi-s3);flex:1 1 240px;min-width:0}
+.c .xbi-identity{min-width:0}
+.c .xbi-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:flex-start;gap:var(--xbi-s2);flex:0 1 auto}
+.c .xbi-body-link{display:block;margin-left:calc(var(--xbi-avatar) + var(--xbi-s3));margin-top:var(--xbi-s2);color:inherit;text-decoration:none}
+.c .xbi-reroll{min-height:var(--xbi-target)}
+</style>
+</head>
+<body>
+<h1>Move the action buttons to the top of the resurfaced-bookmark card</h1>
+<p class="sub">Brief: put all button options (<code>Open on X</code>, <code>Keep for later</code>, <code>Done · Remove</code>, <code>Show another bookmark</code>) at the top, in line with the "From your bookmarks" row and the author/time row. Real <code>--xbi-*</code> tokens, X-dark theme. Constraint: buttons/links must never nest inside the post-body <code>&lt;a&gt;</code>.</p>
+
+<div class="grid">
+  <!-- CURRENT -->
+  <div>
+    <div class="col-head"><h2><span class="tag t-cur">CURRENT</span> actions in bottom footer</h2></div>
+    <p class="note">Today's layout: the whole avatar+text body is one big link; the actions sit in a footer at the very bottom, with "Show another bookmark" on its own row.</p>
+    <div class="feed"><article class="xbi-card cur">
+      <a class="xbi-post-body" href="#">
+        <div class="xbi-avatar-slot"><span class="xbi-avatar"></span></div>
+        <div class="xbi-main">
+          <div class="xbi-provenance">📌 From your bookmarks · #21 of 34 · 34 left</div>
+          <div class="xbi-author"><strong>Zara Zhang</strong><span class="xbi-handle">@zarazhangrui</span><span class="xbi-sep">·</span><span class="xbi-posted">Jun 24, 2026</span></div>
+          <p class="xbi-text">The root cause of procrastination is not the lack of time
+
+It's the lack of courage</p>
+          <div class="xbi-engagement"><span>Replies 40</span><span>Reposts 12</span><span>Likes 240</span><span>Views 16.1K</span><span>Bookmarks 38</span></div>
+        </div>
+      </a>
+      <div class="xbi-footer">
+        <div class="xbi-utility">
+          <a class="xbi-post-link" href="#">Open on X ↗</a>
+          <button class="xbi-action">Keep for later</button>
+          <button class="xbi-action xbi-action-primary">Done · Remove</button>
+        </div>
+        <div class="xbi-meta-controls"><button class="xbi-reroll">Show another bookmark</button></div>
+      </div>
+    </article></div>
+  </div>
+
+  <!-- OPTION A -->
+  <div>
+    <div class="col-head"><h2><span class="tag t-a">OPTION A</span> overlay top-right</h2></div>
+    <p class="note">Keeps the single body-link untouched (no test churn); actions are absolutely positioned in the top-right. Risk: 4 wide controls form a tall cluster that can collide with the post text on narrow widths.</p>
+    <div class="feed"><article class="xbi-card a">
+      <div class="xbi-actions">
+        <a class="xbi-post-link" href="#">Open on X ↗</a>
+        <button class="xbi-action">Keep for later</button>
+        <button class="xbi-action xbi-action-primary">Done · Remove</button>
+        <button class="xbi-reroll">Show another bookmark</button>
+      </div>
+      <a class="xbi-post-body" href="#">
+        <div class="xbi-avatar-slot"><span class="xbi-avatar"></span></div>
+        <div class="xbi-main">
+          <div class="xbi-provenance">📌 From your bookmarks · #21 of 34 · 34 left</div>
+          <div class="xbi-author"><strong>Zara Zhang</strong><span class="xbi-handle">@zarazhangrui</span><span class="xbi-sep">·</span><span class="xbi-posted">Jun 24, 2026</span></div>
+          <p class="xbi-text">The root cause of procrastination is not the lack of time
+
+It's the lack of courage</p>
+          <div class="xbi-engagement"><span>Replies 40</span><span>Reposts 12</span><span>Likes 240</span><span>Views 16.1K</span><span>Bookmarks 38</span></div>
+        </div>
+      </a>
+    </article></div>
+  </div>
+
+  <!-- OPTION C -->
+  <div>
+    <div class="col-head"><h2><span class="tag t-c">OPTION C</span> real header <span class="rec">· recommended</span></h2></div>
+    <p class="note">Identity (avatar + provenance + author) on the left, actions clustered top-right in a proper header grid — genuinely "in line" with the two header rows. The readable body (text/media/engagement) becomes the post link below. Needs small test updates.</p>
+    <div class="feed"><article class="xbi-card c">
+      <div class="xbi-header">
+        <div class="xbi-id-row">
+          <div class="xbi-avatar-slot"><span class="xbi-avatar"></span></div>
+          <div class="xbi-identity">
+            <div class="xbi-provenance">📌 From your bookmarks · #21 of 34 · 34 left</div>
+            <div class="xbi-author"><strong>Zara Zhang</strong><span class="xbi-handle">@zarazhangrui</span><span class="xbi-sep">·</span><span class="xbi-posted">Jun 24, 2026</span></div>
+          </div>
+        </div>
+        <div class="xbi-actions">
+          <a class="xbi-post-link" href="#">Open on X ↗</a>
+          <button class="xbi-action">Keep for later</button>
+          <button class="xbi-action xbi-action-primary">Done · Remove</button>
+          <button class="xbi-reroll">Show another bookmark</button>
+        </div>
+      </div>
+      <a class="xbi-body-link" href="#">
+        <p class="xbi-text">The root cause of procrastination is not the lack of time
+
+It's the lack of courage</p>
+        <div class="xbi-engagement"><span>Replies 40</span><span>Reposts 12</span><span>Likes 240</span><span>Views 16.1K</span><span>Bookmarks 38</span></div>
+      </a>
+    </article></div>
+  </div>
+</div>
+</body>
+</html>

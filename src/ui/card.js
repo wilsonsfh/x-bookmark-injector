@@ -14,7 +14,7 @@ const CARD_CSS = `
   --xbi-text-label: 13px;
   --xbi-text-base: 15px;
   --xbi-avatar-size: 40px;
-  --xbi-target-size: 36px;
+  --xbi-target-size: 28px;
   --xbi-media-max-height: 360px;
   --xbi-radius-media: 14px;
   --xbi-radius-pill: 999px;
@@ -28,18 +28,39 @@ const CARD_CSS = `
   font: var(--xbi-text-base)/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 #${CARD_ID}, #${CARD_ID} * { box-sizing: border-box; }
-#${CARD_ID} .xbi-post-body-link,
-#${CARD_ID} .xbi-post-body {
+#${CARD_ID} .xbi-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--xbi-space-2) var(--xbi-space-3);
+}
+#${CARD_ID} .xbi-id-row {
   display: grid;
   grid-template-columns: var(--xbi-avatar-size) minmax(0, 1fr);
   gap: var(--xbi-space-3);
+  flex: 1 1 240px;
+  min-width: 0;
+}
+#${CARD_ID} .xbi-identity { min-width: 0; }
+#${CARD_ID} .xbi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--xbi-space-1) var(--xbi-space-2);
+  flex: 0 1 auto;
+  margin-left: auto;
+}
+#${CARD_ID} .xbi-post-body-link,
+#${CARD_ID} .xbi-post-body {
+  display: block;
+  margin-left: calc(var(--xbi-avatar-size) + var(--xbi-space-3));
   border-radius: 2px;
   color: inherit;
   text-decoration: none;
 }
 #${CARD_ID} .xbi-post-body-link:hover { background: color-mix(in srgb, currentColor 3%, transparent); }
 #${CARD_ID} .xbi-post-body-link:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
-#${CARD_ID} .xbi-main { min-width: 0; }
 #${CARD_ID} .xbi-avatar-slot { grid-column: 1; }
 #${CARD_ID} .xbi-avatar-fallback {
   display: grid;
@@ -57,13 +78,13 @@ const CARD_CSS = `
   font-size: var(--xbi-text-label);
   overflow-wrap: anywhere;
 }
-#${CARD_ID} .xbi-author,
-#${CARD_ID} .xbi-utility {
+#${CARD_ID} .xbi-author {
   display: flex;
   align-items: center;
-  gap: var(--xbi-space-2);
+  gap: 5px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
-#${CARD_ID} .xbi-author { min-width: 0; flex-wrap: wrap; gap: 5px; }
 #${CARD_ID} .xbi-avatar {
   width: var(--xbi-avatar-size);
   height: var(--xbi-avatar-size);
@@ -130,7 +151,7 @@ const CARD_CSS = `
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
-#${CARD_ID} .xbi-status { margin: var(--xbi-space-2) 0 0; font-size: var(--xbi-text-sm); }
+#${CARD_ID} .xbi-status { margin: var(--xbi-space-2) 0 0 calc(var(--xbi-avatar-size) + var(--xbi-space-3)); font-size: var(--xbi-text-sm); }
 #${CARD_ID} .xbi-status[hidden] { display: none; }
 #${CARD_ID} .xbi-quoted {
   margin: var(--xbi-space-1) 0 var(--xbi-space-2) calc(var(--xbi-avatar-size) + var(--xbi-space-3));
@@ -170,7 +191,6 @@ const CARD_CSS = `
 #${CARD_ID} .xbi-expand,
 #${CARD_ID} .xbi-quote-toggle,
 #${CARD_ID} .xbi-reroll {
-  min-height: 28px;
   padding: 0;
   border: 0;
   color: var(--xbi-link);
@@ -180,27 +200,27 @@ const CARD_CSS = `
   font-weight: 600;
   cursor: pointer;
 }
+#${CARD_ID} .xbi-expand,
+#${CARD_ID} .xbi-quote-toggle { min-height: 28px; }
+/* re-roll sits in the top action cluster beside the pills, so it matches their height */
+#${CARD_ID} .xbi-reroll { min-height: var(--xbi-target-size); padding: 0 var(--xbi-space-2); font-size: var(--xbi-text-sm); font-weight: 500; }
 #${CARD_ID} .xbi-expand:focus-visible,
 #${CARD_ID} .xbi-quote-toggle:focus-visible,
 #${CARD_ID} .xbi-reroll:focus-visible { outline: 2px solid var(--xbi-accent-text); outline-offset: 2px; }
 #${CARD_ID} .xbi-reroll:disabled { opacity: .55; cursor: wait; }
-#${CARD_ID} .xbi-utility {
-  flex-wrap: wrap;
-  margin-top: var(--xbi-space-2);
-}
 #${CARD_ID} .xbi-post-link,
 #${CARD_ID} .xbi-action {
   display: inline-flex;
   min-height: var(--xbi-target-size);
   align-items: center;
   justify-content: center;
-  padding: 0 var(--xbi-space-3);
+  padding: 0 var(--xbi-space-2);
   border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   border-radius: var(--xbi-radius-pill);
   color: inherit;
   background: transparent;
   font: inherit;
-  font-size: var(--xbi-text-label);
+  font-size: var(--xbi-text-sm);
   font-weight: 600;
   line-height: 1;
   text-decoration: none;
@@ -416,7 +436,7 @@ export function buildCardElement(bookmark, stats, handlers) {
     avatarSlot.append(fallback);
   }
 
-  const main = node('div', null, 'xbi-main');
+  const identity = node('div', null, 'xbi-identity');
   const provenance = node(
     'div',
     `📌 From your bookmarks · #${bookmark.saveRank} of ${stats.total} · ${meta.left}`,
@@ -431,15 +451,16 @@ export function buildCardElement(bookmark, stats, handlers) {
     meta.posted.startsWith('Posted ') ? meta.posted.slice(7) : meta.posted,
     'xbi-posted',
   ));
+  identity.append(provenance, authorRow);
+
   const hasText = typeof bookmark.text === 'string' && bookmark.text.trim().length > 0;
   const text = node('p', bookmark.text, 'xbi-text');
   text.id = 'xbi-text-content';
   const isLongPost = hasText && Array.from(bookmark.text).length > 320;
   if (isLongPost) text.className = 'xbi-text xbi-text-collapsed';
-  main.append(provenance, authorRow);
-  if (hasText) main.append(text);
+  if (hasText) postBody.append(text);
   const linkPreview = buildLinkPreview(bookmark.link);
-  if (linkPreview) main.append(linkPreview);
+  if (linkPreview) postBody.append(linkPreview);
 
   const firstMedia = bookmark.media?.[0];
   const mediaUrl = trustedUrl(firstMedia?.url, IMAGE_HOSTS);
@@ -450,11 +471,11 @@ export function buildCardElement(bookmark, stats, handlers) {
       ? firstMedia.alt
       : `Image from ${bookmark.author || bookmark.handle || 'this account'}'s bookmarked post`;
     image.loading = 'lazy';
-    main.append(image);
+    postBody.append(image);
   }
 
   const engagement = buildEngagement(bookmark.engagement);
-  if (engagement) main.append(engagement);
+  if (engagement) postBody.append(engagement);
 
   const status = node('p', null, 'xbi-status');
   status.role = 'status';
@@ -497,14 +518,18 @@ export function buildCardElement(bookmark, stats, handlers) {
     });
     metaControls.append(quoteToggle);
   }
-  const utility = node('div', null, 'xbi-utility');
+
+  // Action controls live in a top-of-card cluster, in line with the provenance
+  // and author rows (the header), instead of a bottom footer. They must stay
+  // OUTSIDE the post-body link (no interactive nesting inside an <a>).
+  const actions = node('div', null, 'xbi-actions');
   if (postUrl) {
     const link = node('a', 'Open on X ↗', 'xbi-post-link');
     link.setAttribute('aria-label', openLabel);
     link.href = postUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    utility.append(link);
+    actions.append(link);
   }
   const keepButton = action('Keep for later', false);
   const doneButton = action('Done · Remove', true);
@@ -541,20 +566,22 @@ export function buildCardElement(bookmark, stats, handlers) {
   const ACTION_FALLBACK = 'Could not update this bookmark. Try again.';
   keepButton.addEventListener('click', () => runAction(handlers.onKeep, ACTION_FALLBACK));
   doneButton.addEventListener('click', () => runAction(handlers.onDone, ACTION_FALLBACK));
-  utility.append(keepButton, doneButton);
-  postBody.append(avatarSlot, main);
-  footer.append(status, utility);
+  actions.append(keepButton, doneButton);
 
   if (typeof handlers.onReroll === 'function') {
-    const rerollRow = node('div', null, 'xbi-meta-controls');
     const reroll = node('button', 'Show another bookmark', 'xbi-reroll');
     reroll.type = 'button';
     controls.push(reroll);
     reroll.addEventListener('click', () => runAction(handlers.onReroll, 'No other bookmark to show right now.'));
-    rerollRow.append(reroll);
-    footer.append(rerollRow);
+    actions.append(reroll);
   }
 
+  const idRow = node('div', null, 'xbi-id-row');
+  idRow.append(avatarSlot, identity);
+  const header = node('div', null, 'xbi-header');
+  header.append(idRow, actions);
+
+  card.append(header, status);
   if (quotedSection) card.append(postBody, quotedSection, footer);
   else card.append(postBody, footer);
   if (typeof ResizeObserver === 'function' && hasText) {

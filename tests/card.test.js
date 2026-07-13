@@ -126,9 +126,10 @@ describe('buildCardElement', () => {
     const css = card.findAll('style')[0].textContent;
     const provenance = card.findAll('div').find((element) => element.className === 'xbi-provenance');
     const bodyLink = card.children.find((element) => element.className === 'xbi-post-body-link');
-    const avatarSlot = bodyLink.children.find((element) => element.className === 'xbi-avatar-slot');
-    const main = bodyLink.children.find((element) => element.className === 'xbi-main');
-    const utility = card.findAll('div').find((element) => element.className === 'xbi-utility');
+    const header = card.children.find((element) => element.className === 'xbi-header');
+    const avatarSlot = card.findAll('div').find((element) => element.className === 'xbi-avatar-slot');
+    const identity = card.findAll('div').find((element) => element.className === 'xbi-identity');
+    const actions = card.findAll('div').find((element) => element.className === 'xbi-actions');
     const readLink = card.findAll('a').find((element) => element.className === 'xbi-post-link');
 
     expect(css).toContain('grid-template-columns: var(--xbi-avatar-size) minmax(0, 1fr)');
@@ -137,9 +138,12 @@ describe('buildCardElement', () => {
     expect(css).not.toContain('.xbi-chip');
     expect(provenance.textContent).toBe('📌 From your bookmarks · #12 of 87 · 74 left');
     expect(avatarSlot.tagName).toBe('DIV');
-    expect(main.children).toContain(provenance);
-    expect(utility.findAll('a')).toHaveLength(1);
-    expect(utility.findAll('button')).toHaveLength(2);
+    expect(identity.children).toContain(provenance);
+    // Actions live in the header, at the top of the card — above the post body.
+    expect(header.findAll('div')).toContain(actions);
+    expect(card.children.indexOf(header)).toBeLessThan(card.children.indexOf(bodyLink));
+    expect(actions.findAll('a')).toHaveLength(1);
+    expect(actions.findAll('button')).toHaveLength(2);
     expect(readLink.textContent).toBe('Open on X ↗');
     expect(readLink.getAttribute('aria-label')).toBe('Open @zarazhangrui’s post on X (opens in new tab)');
     expect(card.findAll('button').map((button) => button.textContent)).toEqual([
@@ -189,7 +193,7 @@ describe('buildCardElement', () => {
 
     expect(buttons.map((button) => button.textContent)).toEqual(['Keep for later', 'Done · Remove']);
     expect(buttons.every((button) => button.type === 'button')).toBe(true);
-    expect(css).toContain('--xbi-target-size: 36px');
+    expect(css).toContain('--xbi-target-size: 28px');
     expect(css).toContain('min-height: var(--xbi-target-size)');
     expect(css).toContain(':focus-visible');
     expect(css).toContain('.xbi-action:disabled');
