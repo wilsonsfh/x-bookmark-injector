@@ -2,6 +2,15 @@
 
 A personal Chromium MV3 extension that puts one random saved X bookmark at the top of the **For You** feed as a simple native-looking post. It shows the bookmark's save-order rank, the post's published date, and how many cached bookmarks remain.
 
+## Status
+
+**Last reviewed: 2026-08-11 — Done**
+
+- Owner-confirmed Done. Read/sync loop, enriched card, quoted-post expand, re-roll and link preview were live-accepted in logged-in X.
+- Verified this sweep: `npm test` -> 313/313 passing (vitest, ~2.4s). Working tree clean.
+- Latest commit `b5eebb5` (docs: record top-of-card action layout); public on `github.com/wilsonsfh/x-bookmark-injector`, default branch `main`.
+- Only remaining item is the manual destructive-action E2E gate (real Delete/Undo) in `docs/E2E_CHECKLIST.md`; core feature set is shipped.
+
 ## Release status
 
 The 2026-07-12 live run confirmed that the unpacked extension loads, captures current X data, completes pagination, injects Option B first on Home, shows the real author, opens the exact bookmarked status from the post body, and expands/collapses long text with a six-line Read more treatment. The full checklist—including the real DeleteBookmark/CreateBookmark Undo round trip—remains open in [`docs/E2E_CHECKLIST.md`](docs/E2E_CHECKLIST.md). Do not trust **Done · Remove** with important bookmarks until those destructive-action checks are completed.
